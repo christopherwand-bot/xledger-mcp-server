@@ -17,6 +17,10 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import { randomUUID } from "node:crypto";
+import { createServer, type IncomingMessage } from "node:http";
 import { z } from "zod";
 import { gql } from "./graphql.js";
 import { validateDate, today, monthChunks, monthSpan } from "./validation.js";
@@ -37,10 +41,11 @@ import { aggregateConsultants } from "./profitability.js";
 
 const VERSION = "1.1.0";
 
-const server = new McpServer({
-  name: "xledger",
-  version: VERSION,
-});
+function createMcpServer() {
+  const server = new McpServer({
+    name: "xledger",
+    version: VERSION,
+  });
 
 const READ_ONLY = { readOnlyHint: true, openWorldHint: true } as const;
 
@@ -1214,7 +1219,119 @@ server.tool(
   }
 );
 
+  return server;
+}
+
 // ─── Start server ────────────────────────────────────────────────────────────
 
-const transport = new StdioServerTransport();
-await server.connect(transport);
+/**
+ * The upstream project is designed for local MCP clients (stdio).  Setting
+ * MCP_TRANSPORT=http exposes the same read-only tools over Streamable HTTP so
+ * it can be connected as a remote MCP server in ChatGPT.
+ *
+ * Keep the Xledger token server-side.  MCP_AUTH_TOKEN is a separate secret
+ * used only by the MCP client when connecting to this server.
+ */
+const transportMode = process.env.MCP_TRANSPORT || "stdio";
+
+if (transportMode === "http") {
+  const mcpAuthToken = process.env.MCP_AUTH_TOKEN;
+  if (!mcpAuthToken) {
+    console.error("ERROR: MCP_AUTH_TOKEN environment variable is not set");
+    process.exit(1);
+  }
+
+  const sessions = new Map<string, StreamableHTTPServerTransport>();
+
+  async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(Buffer.from(chunk));
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  }
+
+  const port = Number(process.env.PORT || 3000);
+  const httpServer = createServer(async (req, res) => {
+    const path = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`).pathname;
+
+    if (path === "/health") {
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ status: "ok", service: "xledger-mcp", transport: "http" }));
+      return;
+    }
+
+    if (path !== "/mcp") {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Not found" }));
+      return;
+    }
+
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, {
+        "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, MCP-Protocol-Version, MCP-Session-Id",
+      });
+      res.end();
+      return;
+    }
+
+    const authorization = req.headers.authorization;
+    if (authorization !== `Bearer ${mcpAuthToken}`) {
+      res.writeHead(401, {
+        "Content-Type": "application/json",
+        "WWW-Authenticate": "Bearer",
+      });
+      res.end(JSON.stringify({ error: "Unauthorized" }));
+      return;
+    }
+
+    try {
+      const sessionId = req.headers["mcp-session-id"];
+      const existingTransport =
+        typeof sessionId === "string" ? sessions.get(sessionId) : undefined;
+
+      if (existingTransport) {
+        await existingTransport.handleRequest(req, res);
+        return;
+      }
+
+      if (req.method !== "POST") {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "MCP session is required" }));
+        return;
+      }
+
+      const body = await readJsonBody(req);
+      if (!isInitializeRequest(body)) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "MCP initialization is required" }));
+        return;
+      }
+
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: randomUUID,
+      });
+      transport.onclose = () => {
+        if (transport.sessionId) sessions.delete(transport.sessionId);
+      };
+      await createMcpServer().connect(transport);
+      await transport.handleRequest(req, res, body);
+      if (transport.sessionId) sessions.set(transport.sessionId, transport);
+    } catch (error) {
+      console.error("MCP HTTP request failed", error);
+      if (!res.headersSent) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Internal server error" }));
+      }
+    }
+  });
+
+  httpServer.listen(port, "0.0.0.0", () => {
+    console.log(`Xledger MCP HTTP server listening on port ${port}`);
+  });
+} else if (transportMode === "stdio") {
+  const transport = new StdioServerTransport();
+  await createMcpServer().connect(transport);
+} else {
+  console.error(`ERROR: Unsupported MCP_TRANSPORT: ${transportMode}`);
+  process.exit(1);
+}
