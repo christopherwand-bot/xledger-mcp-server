@@ -62,11 +62,28 @@ npm run build
 |----------|----------|---------|-------------|
 | `XLEDGER_GRAPHQL_TOKEN` | Yes | — | Your Xledger API token |
 | `XLEDGER_API_URL` | No | `https://www.xledger.net/graphql` | API endpoint (use `https://demo.xledger.net/graphql` for testing) |
+| `MCP_TRANSPORT` | No | `stdio` | Set to `http` when deploying a remote MCP endpoint for ChatGPT |
+| `MCP_AUTH_TOKEN` | HTTP only | — | Separate bearer secret that protects the remote `/mcp` endpoint |
 | `XLEDGER_ALLOW_ART9_DETAIL` | No | unset | Set to `1` only if the data controller has decided to allow per-person health absence detail. See [GDPR and absence data](#gdpr-and-absence-data). |
 
 See `.env.example`.
 
 The server communicates over stdio. It is designed to be launched by an MCP client, not run standalone.
+
+### Remote MCP endpoint for ChatGPT
+
+For ChatGPT, deploy the server with `MCP_TRANSPORT=http`. It exposes a health check at `/health` and an authenticated Streamable HTTP MCP endpoint at `/mcp`.
+
+Set the following secrets in the hosting platform, never in the repository:
+
+```text
+MCP_TRANSPORT=http
+MCP_AUTH_TOKEN=<a separate long, random secret>
+XLEDGER_GRAPHQL_TOKEN=<the Xledger token>
+XLEDGER_API_URL=https://demo.xledger.net/graphql
+```
+
+After deployment, add `https://your-domain.example/mcp` as a custom MCP server in ChatGPT and use `MCP_AUTH_TOKEN` as its bearer token. `XLEDGER_GRAPHQL_TOKEN` remains only on the server and is never supplied to ChatGPT.
 
 ## Configuration
 
