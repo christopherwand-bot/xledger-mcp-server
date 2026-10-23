@@ -10,7 +10,7 @@ Use it with Claude, VS Code Copilot, or any MCP-compatible AI assistant to query
 - Compatible with Xledger GraphQL API v2 (cursor pagination, v2 filter syntax)
 - OAuth 2.1 protection for remote ChatGPT connections; legacy bearer protection for non-web clients
 - GDPR Art. 9 guard on absence project and time-type names in `get_absences`, `get_timesheets`, `get_consultant_profitability`, `get_expenses` and `get_journal_entries`: no per-person health absence by default. Some fields are not covered; see [Not covered](#not-covered)
-- Zero runtime dependencies beyond the MCP SDK
+- MCP SDK and `jose` for OAuth token verification
 - TypeScript with full type safety
 
 ## Tools
@@ -43,7 +43,7 @@ All tools are annotated with `readOnlyHint: true`. The server never sends GraphQ
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 22+ (with Web Crypto and Fetch)
 - An Xledger account with GraphQL API access
 - An API token (generate at: Xledger > Administration > System Access > GraphQL/API tokens)
 
@@ -69,6 +69,7 @@ npm run build
 | `OAUTH_AUDIENCE` | No | `OAUTH_RESOURCE` | Expected `aud` claim in the OAuth access token |
 | `OAUTH_REQUIRED_SCOPE` | No | `xledger:read` | OAuth scope required to call the MCP endpoint |
 | `OAUTH_JWKS_URL` | No | Issuer `/.well-known/jwks.json` | OAuth provider's signing-key endpoint |
+| `OAUTH_ALLOWED_SUBJECTS` | OAuth | — | Comma-separated exact user IDs permitted to use this shared Xledger connection; wildcards are rejected |
 | `XLEDGER_ALLOW_ART9_DETAIL` | No | unset | Set to `1` only if the data controller has decided to allow per-person health absence detail. See [GDPR and absence data](#gdpr-and-absence-data). |
 
 See `.env.example`.
@@ -81,21 +82,31 @@ For ChatGPT on the web, deploy the server with `MCP_TRANSPORT=http` and protect 
 
 ChatGPT web cannot store a customer-provided static bearer secret. It instead follows the OAuth authorization-code flow with PKCE, so the Xledger token remains on the server and each person signs in through the configured identity provider.
 
-Configure an OAuth API at your identity provider first. With Auth0, use the public MCP domain as the API Identifier and define a single `xledger:read` permission. Enable Dynamic Client Registration and grant that permission by default to third-party applications. Then set these secrets on the hosting platform, never in the repository:
+Configure an OAuth API at your identity provider first. With Auth0:
+
+1. Use the public MCP domain as the API Identifier and define the single `xledger:read` permission. Use RS256 access-token signing.
+2. Keep user-delegated access on **Per-app authorization** and machine-to-machine access on **No apps allowed**. Enable RBAC and assign `xledger:read` only to approved pilot users.
+3. Register the ChatGPT client using a method supported by your Auth0 plan (manual CIMD or a predefined client). Copy the exact metadata URL or redirect URI shown by ChatGPT. Do not enable open registration or broad default API grants just for this single-client pilot.
+4. Grant that client only user-delegated `xledger:read` access. For a third-party client, enable a suitable domain-level login connection. Keep public signups disabled for a private pilot.
+5. Enable Auth0's Resource Parameter Compatibility Profile so ChatGPT's `resource` parameter selects this API. Verify discovery advertises PKCE S256.
+6. Copy the issuer **exactly** from Auth0's discovery document, including its trailing slash. Configure the permitted pilot user IDs below. An Auth0 dashboard administrator is not automatically an application user.
+
+Then set the configuration and secrets on the hosting platform, never in the repository:
 
 ```text
 MCP_TRANSPORT=http
 XLEDGER_GRAPHQL_TOKEN=<the Xledger token>
 XLEDGER_API_URL=https://demo.xledger.net/graphql
-OAUTH_ISSUER=https://your-tenant.us.auth0.com
+OAUTH_ISSUER=https://your-tenant.us.auth0.com/
 OAUTH_RESOURCE=https://your-public-mcp-domain.example
 OAUTH_AUDIENCE=https://your-public-mcp-domain.example
 OAUTH_REQUIRED_SCOPE=xledger:read
+OAUTH_ALLOWED_SUBJECTS=auth0|replace-with-your-pilot-user-id
 ```
 
-The server verifies the token signature, issuer, audience, expiration and `xledger:read` scope on every MCP request. It never handles user passwords or stores OAuth client secrets.
+The server verifies the token signature, exact issuer and audience, expiration, granted `xledger:read` scope and permitted user ID on every MCP request. The Auth0 `permissions` claim is not a substitute for delegated scope. Sessions are bound to the authenticated user and OAuth client. It never handles user passwords or stores OAuth client secrets. This is one shared Xledger connection: all permitted users see the data allowed by its server-side Xledger token, not separate per-user Xledger accounts.
 
-After deployment, add `https://your-domain.example/mcp` as a custom MCP server in ChatGPT and complete the sign-in window. Do not enter `XLEDGER_GRAPHQL_TOKEN` or `MCP_AUTH_TOKEN` in ChatGPT. `MCP_AUTH_TOKEN` may remain configured as a separate fallback for local or non-web clients during the OAuth migration.
+After deployment, add `https://your-domain.example/mcp` as a custom MCP server in ChatGPT and complete the sign-in window. Do not enter `XLEDGER_GRAPHQL_TOKEN` or `MCP_AUTH_TOKEN` in ChatGPT. `MCP_AUTH_TOKEN` may remain configured as a separate fallback for local or non-web clients during the OAuth migration, but it bypasses OAuth user restrictions; remove it after migration if no legacy client needs it. Never enable real company data until the authorized-user and denied-user tests both pass end to end.
 
 ## Configuration
 

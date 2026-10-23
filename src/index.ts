@@ -1251,7 +1251,7 @@ if (transportMode === "http") {
     process.exit(1);
   }
 
-  const sessions = new Map<string, StreamableHTTPServerTransport>();
+  const sessions = new Map<string, { transport: StreamableHTTPServerTransport; owner: string }>();
 
   async function readJsonBody(req: IncomingMessage): Promise<unknown> {
     const chunks: Buffer[] = [];
@@ -1300,11 +1300,11 @@ if (transportMode === "http") {
 
     const token = bearerToken(req.headers.authorization);
     const authorizedWithStaticToken = token ? matchesStaticBearerToken(token, mcpAuthToken) : false;
-    const authorizedWithOAuth =
+    const oauthIdentity =
       !authorizedWithStaticToken && token && oauthAuthorizer
         ? await oauthAuthorizer.verifyAccessToken(token)
-        : false;
-    if (!authorizedWithStaticToken && !authorizedWithOAuth) {
+        : undefined;
+    if (!authorizedWithStaticToken && !oauthIdentity) {
       const wwwAuthenticate = oauthAuthorizer
         ? `Bearer resource_metadata="${oauthAuthorizer.metadataUrl}", scope="${oauthAuthorizer.config.requiredScope}"`
         : "Bearer";
@@ -1318,11 +1318,19 @@ if (transportMode === "http") {
 
     try {
       const sessionId = req.headers["mcp-session-id"];
-      const existingTransport =
+      // Bind sessions to a user AND client, while allowing access-token refresh.
+      const owner = authorizedWithStaticToken ? "legacy-bearer" : JSON.stringify(oauthIdentity);
+      const existingSession =
         typeof sessionId === "string" ? sessions.get(sessionId) : undefined;
 
-      if (existingTransport) {
-        await existingTransport.handleRequest(req, res);
+      if (sessionId && (!existingSession || existingSession.owner !== owner)) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "MCP session not found" }));
+        return;
+      }
+
+      if (existingSession) {
+        await existingSession.transport.handleRequest(req, res);
         return;
       }
 
@@ -1347,7 +1355,7 @@ if (transportMode === "http") {
       };
       await createMcpServer().connect(transport);
       await transport.handleRequest(req, res, body);
-      if (transport.sessionId) sessions.set(transport.sessionId, transport);
+      if (transport.sessionId) sessions.set(transport.sessionId, { transport, owner });
     } catch (error) {
       console.error("MCP HTTP request failed", error);
       if (!res.headersSent) {
