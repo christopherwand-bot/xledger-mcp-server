@@ -8,7 +8,7 @@ Use it with Claude, VS Code Copilot, or any MCP-compatible AI assistant to query
 
 - 19 read-only tools covering accounting, project, invoicing and HR data
 - Compatible with Xledger GraphQL API v2 (cursor pagination, v2 filter syntax)
-- Token-based authentication (no OAuth complexity)
+- OAuth 2.1 protection for remote ChatGPT connections; legacy bearer protection for non-web clients
 - GDPR Art. 9 guard on absence project and time-type names in `get_absences`, `get_timesheets`, `get_consultant_profitability`, `get_expenses` and `get_journal_entries`: no per-person health absence by default. Some fields are not covered; see [Not covered](#not-covered)
 - Zero runtime dependencies beyond the MCP SDK
 - TypeScript with full type safety
@@ -63,7 +63,12 @@ npm run build
 | `XLEDGER_GRAPHQL_TOKEN` | Yes | — | Your Xledger API token |
 | `XLEDGER_API_URL` | No | `https://www.xledger.net/graphql` | API endpoint (use `https://demo.xledger.net/graphql` for testing) |
 | `MCP_TRANSPORT` | No | `stdio` | Set to `http` when deploying a remote MCP endpoint for ChatGPT |
-| `MCP_AUTH_TOKEN` | HTTP only | — | Separate bearer secret that protects the remote `/mcp` endpoint |
+| `MCP_AUTH_TOKEN` | HTTP only | — | Optional legacy bearer secret for non-web clients; use OAuth for ChatGPT web |
+| `OAUTH_ISSUER` | ChatGPT web | — | HTTPS issuer URL from the OAuth provider (for example Auth0) |
+| `OAUTH_RESOURCE` | ChatGPT web | — | Canonical HTTPS identifier for this MCP server; must equal the OAuth API identifier |
+| `OAUTH_AUDIENCE` | No | `OAUTH_RESOURCE` | Expected `aud` claim in the OAuth access token |
+| `OAUTH_REQUIRED_SCOPE` | No | `xledger:read` | OAuth scope required to call the MCP endpoint |
+| `OAUTH_JWKS_URL` | No | Issuer `/.well-known/jwks.json` | OAuth provider's signing-key endpoint |
 | `XLEDGER_ALLOW_ART9_DETAIL` | No | unset | Set to `1` only if the data controller has decided to allow per-person health absence detail. See [GDPR and absence data](#gdpr-and-absence-data). |
 
 See `.env.example`.
@@ -72,18 +77,25 @@ The server communicates over stdio. It is designed to be launched by an MCP clie
 
 ### Remote MCP endpoint for ChatGPT
 
-For ChatGPT, deploy the server with `MCP_TRANSPORT=http`. It exposes a health check at `/health` and an authenticated Streamable HTTP MCP endpoint at `/mcp`.
+For ChatGPT on the web, deploy the server with `MCP_TRANSPORT=http` and protect it with OAuth 2.1. It exposes a health check at `/health`, OAuth protected-resource metadata at `/.well-known/oauth-protected-resource`, and a Streamable HTTP MCP endpoint at `/mcp`.
 
-Set the following secrets in the hosting platform, never in the repository:
+ChatGPT web cannot store a customer-provided static bearer secret. It instead follows the OAuth authorization-code flow with PKCE, so the Xledger token remains on the server and each person signs in through the configured identity provider.
+
+Configure an OAuth API at your identity provider first. With Auth0, use the public MCP domain as the API Identifier and define a single `xledger:read` permission. Enable Dynamic Client Registration and grant that permission by default to third-party applications. Then set these secrets on the hosting platform, never in the repository:
 
 ```text
 MCP_TRANSPORT=http
-MCP_AUTH_TOKEN=<a separate long, random secret>
 XLEDGER_GRAPHQL_TOKEN=<the Xledger token>
 XLEDGER_API_URL=https://demo.xledger.net/graphql
+OAUTH_ISSUER=https://your-tenant.us.auth0.com
+OAUTH_RESOURCE=https://your-public-mcp-domain.example
+OAUTH_AUDIENCE=https://your-public-mcp-domain.example
+OAUTH_REQUIRED_SCOPE=xledger:read
 ```
 
-After deployment, add `https://your-domain.example/mcp` as a custom MCP server in ChatGPT and use `MCP_AUTH_TOKEN` as its bearer token. `XLEDGER_GRAPHQL_TOKEN` remains only on the server and is never supplied to ChatGPT.
+The server verifies the token signature, issuer, audience, expiration and `xledger:read` scope on every MCP request. It never handles user passwords or stores OAuth client secrets.
+
+After deployment, add `https://your-domain.example/mcp` as a custom MCP server in ChatGPT and complete the sign-in window. Do not enter `XLEDGER_GRAPHQL_TOKEN` or `MCP_AUTH_TOKEN` in ChatGPT. `MCP_AUTH_TOKEN` may remain configured as a separate fallback for local or non-web clients during the OAuth migration.
 
 ## Configuration
 

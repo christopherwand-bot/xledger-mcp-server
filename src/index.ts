@@ -22,6 +22,12 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage } from "node:http";
 import { z } from "zod";
+import {
+  bearerToken,
+  createOAuthAuthorizer,
+  matchesStaticBearerToken,
+  readOAuthConfig,
+} from "./oauth.js";
 import { gql } from "./graphql.js";
 import { validateDate, today, monthChunks, monthSpan } from "./validation.js";
 import { connNodes, paginateAll, truncationWarning, type Node } from "./pagination.js";
@@ -1229,15 +1235,19 @@ server.tool(
  * MCP_TRANSPORT=http exposes the same read-only tools over Streamable HTTP so
  * it can be connected as a remote MCP server in ChatGPT.
  *
- * Keep the Xledger token server-side.  MCP_AUTH_TOKEN is a separate secret
- * used only by the MCP client when connecting to this server.
+ * Keep the Xledger token server-side. The HTTP endpoint can be protected by
+ * an OAuth 2.1 access token (required by ChatGPT web), or by the legacy
+ * MCP_AUTH_TOKEN while OAuth is being rolled out for non-web clients.
  */
 const transportMode = process.env.MCP_TRANSPORT || "stdio";
 
 if (transportMode === "http") {
   const mcpAuthToken = process.env.MCP_AUTH_TOKEN;
-  if (!mcpAuthToken) {
-    console.error("ERROR: MCP_AUTH_TOKEN environment variable is not set");
+  const oauthConfig = readOAuthConfig();
+  const oauthAuthorizer = oauthConfig ? createOAuthAuthorizer(oauthConfig) : undefined;
+
+  if (!mcpAuthToken && !oauthAuthorizer) {
+    console.error("ERROR: configure MCP_AUTH_TOKEN or OAuth (OAUTH_ISSUER and OAUTH_RESOURCE)");
     process.exit(1);
   }
 
@@ -1259,6 +1269,20 @@ if (transportMode === "http") {
       return;
     }
 
+    if (path === "/.well-known/oauth-protected-resource" && oauthAuthorizer) {
+      if (req.method !== "GET") {
+        res.writeHead(405, { Allow: "GET" });
+        res.end();
+        return;
+      }
+      res.writeHead(200, {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+      });
+      res.end(JSON.stringify(oauthAuthorizer.protectedResourceMetadata));
+      return;
+    }
+
     if (path !== "/mcp") {
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Not found" }));
@@ -1274,11 +1298,19 @@ if (transportMode === "http") {
       return;
     }
 
-    const authorization = req.headers.authorization;
-    if (authorization !== `Bearer ${mcpAuthToken}`) {
+    const token = bearerToken(req.headers.authorization);
+    const authorizedWithStaticToken = token ? matchesStaticBearerToken(token, mcpAuthToken) : false;
+    const authorizedWithOAuth =
+      !authorizedWithStaticToken && token && oauthAuthorizer
+        ? await oauthAuthorizer.verifyAccessToken(token)
+        : false;
+    if (!authorizedWithStaticToken && !authorizedWithOAuth) {
+      const wwwAuthenticate = oauthAuthorizer
+        ? `Bearer resource_metadata="${oauthAuthorizer.metadataUrl}", scope="${oauthAuthorizer.config.requiredScope}"`
+        : "Bearer";
       res.writeHead(401, {
         "Content-Type": "application/json",
-        "WWW-Authenticate": "Bearer",
+        "WWW-Authenticate": wwwAuthenticate,
       });
       res.end(JSON.stringify({ error: "Unauthorized" }));
       return;
