@@ -30,6 +30,27 @@ describe("bounded Xledger reads", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  it("waits out the stated Xledger GraphQL burst window and retries only once", async () => {
+    const burst = { errors: [{ message: "Too many requests in the last 5 seconds. Please wait a few seconds before sending more requests. See `rateLimit.burstLimit` and `rateLimit.burstRequests`." }] };
+    const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(burst)))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { result: 1 } })));
+    const { run, delay } = client(fetcher);
+    expect(await run("{ result }")).toEqual({ result: 1 });
+    expect(delay).toHaveBeenCalledWith(5250); expect(fetcher).toHaveBeenCalledTimes(2);
+    const failing = vi.fn(async () => new Response(JSON.stringify(burst)));
+    await expect(client(failing).run("{ result }")).rejects.toThrow("Too many requests");
+    expect(failing).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry mixed rate-limit and permission failures", async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ errors: [
+      { message: "Too many requests in the last 5 seconds." }, { message: "No permission" },
+    ] })));
+    const { run, delay } = client(fetcher);
+    await expect(run("{ result }")).rejects.toThrow("No permission");
+    expect(fetcher).toHaveBeenCalledTimes(1); expect(delay).not.toHaveBeenCalled();
+  });
+
   it("rejects writes before a request is sent", async () => {
     const fetcher = vi.fn();
     await expect(client(fetcher).run("mutation { addSuppliers { dbId } }")).rejects.toThrow("read queries");

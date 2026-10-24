@@ -45,10 +45,13 @@ beforeAll(async () => {
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(Buffer.from(chunk));
     const query = JSON.parse(Buffer.concat(chunks).toString()).query as string;
-    const rows = [{ dbId: 1, invoiceNumber: "TEST-1", invoiceRemaining: "-100" }, { dbId: 2, invoiceNumber: "TEST-2", invoiceRemaining: "25" }];
+    const rows = [{ dbId: 1, invoiceNumber: "TEST-1", invoiceRemaining: "-100" }, { dbId: 2, invoiceNumber: "TEST-2", invoiceRemaining: "25" }]
+      .map(row => ({ ...row, ownerDbId: 7, transactionHeaderDbId: 70, transactionHeader: { dbId: 70, ownerDbId: 7 } }));
     const nodes = query.includes("invoiceRemaining_lt") ? rows : rows.filter(row => Number(row.invoiceRemaining) > 0);
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ data: { apTransactions: { pageInfo: { hasNextPage: false }, edges: nodes.map(node => ({ cursor: String(node.dbId), node })) } } }));
+    const data = query.includes("entities(") ? { entities: { edges: [{ node: { dbId: 7 } }] } }
+      : { apTransactions: { pageInfo: { hasNextPage: false }, edges: nodes.map(node => ({ cursor: String(node.dbId), node })) } };
+    res.end(JSON.stringify({ data }));
   });
   api.listen(0, "127.0.0.1");
   await once(api, "listening");
@@ -65,7 +68,7 @@ describe("real HTTP transport with isolated dummy credentials", () => {
   it("reports the deployed code version without exposing credentials", async () => {
     const response = await fetch(url + "/health");
     const data = await response.json();
-    expect(data).toMatchObject({ status: "ok", version: "1.4.0" });
+    expect(data).toMatchObject({ status: "ok", version: "1.5.0" });
     expect(JSON.stringify(data)).not.toContain(secret);
   });
 
@@ -81,6 +84,8 @@ describe("real HTTP transport with isolated dummy credentials", () => {
     await rpc({ jsonrpc: "2.0", method: "notifications/initialized" }, session);
     const listed = await rpc({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }, session);
     expect(listed.data.result.tools.some((tool: any) => tool.name === "get_connection_info")).toBe(true);
+    expect(listed.data.result.tools.some((tool: any) => tool.name === "get_posted_transactions")).toBe(true);
+    expect(listed.data.result.tools.some((tool: any) => tool.name === "reconcile_posted_period")).toBe(true);
     expect(listed.data.result.tools.some((tool: any) => tool.name === "get_employees")).toBe(false);
     const result = await rpc({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "get_ap_transactions", arguments: { first: 10, outstandingOnly: true } } }, session);
     const payload = JSON.parse(result.data.result.content[0].text);

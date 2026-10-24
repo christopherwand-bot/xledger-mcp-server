@@ -66,8 +66,8 @@ describe("financial pilot through the actual MCP protocol", () => {
       { dbId: 1, invoiceNumber: "TEST-INVOICE", invoiceRemaining: "-100.0000" },
       { dbId: 2, invoiceNumber: "TEST-CREDIT", invoiceRemaining: "25.0000" },
       { dbId: 3, invoiceNumber: "TEST-PAID", invoiceRemaining: "0.0000" },
-    ];
-    const run = vi.fn(async (query: string) => page("apTransactions", input.filter(row => {
+    ].map(row => ({ ...row, ownerDbId: 7, transactionHeaderDbId: 70, transactionHeader: { dbId: 70, ownerDbId: 7 } }));
+    const run = vi.fn(async (query: string) => query.includes("entities(") ? page("entities", [{ dbId: 7 }]) : page("apTransactions", input.filter(row => {
       const value = Number(row.invoiceRemaining);
       return query.includes("OR:") && query.includes("invoiceRemaining_lt") ? value !== 0 : value > 0;
     })));

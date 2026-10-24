@@ -43,8 +43,15 @@ export function createGraphqlClient(options: {
         }
         const json = await res.json() as { data?: Record<string, any>; errors?: Array<{ message: string; extensions?: { code?: string } }> };
         if (json.errors?.length) {
-          if (attempt === 0 && json.errors.some(e => String(e.extensions?.code || "").toUpperCase().includes("CONCURRENCY_LIMIT_REACHED"))) {
-            await delay(1_000);
+          const retryDelays = json.errors.map(e => {
+            if (String(e.extensions?.code || "").toUpperCase().includes("CONCURRENCY_LIMIT_REACHED")) return 1_000;
+            // Xledger can return its burst limit as GraphQL errors with HTTP 200.
+            // Wait out the stated window, once; never retry permission/unknown errors.
+            const burst = /^Too many requests in the last (\d{1,3}) seconds?\b/i.exec(e.message);
+            return burst ? Math.min(30_000, Math.max(1_000, Number(burst[1]) * 1_000 + 250)) : null;
+          });
+          if (attempt === 0 && retryDelays.every((ms): ms is number => ms !== null)) {
+            await delay(Math.max(...retryDelays));
             continue;
           }
           throw new XledgerApiError(`Xledger GraphQL errors: ${JSON.stringify(json.errors.map(e => ({ message: e.message })))}`, "GRAPHQL_ERROR");
