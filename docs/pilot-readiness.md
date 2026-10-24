@@ -17,9 +17,13 @@ The October 2026 demo tests established that MCP connectivity works but found da
 - `get_connection_info` reports the configured API endpoint/environment and tries a current-entity lookup without returning credentials. This does not establish the token's full owner scope.
 - `get_invoice_line_capabilities` inspects actual Xledger types for quantity, unit price and invoice relationships. It does not yet read invoice lines or documents, and schema visibility is not proof of record-read permission.
 
+## Live timestamp correction in 1.2.1
+
+Live GL validation established that Xledger rejects a `Z` offset on the createdAt filter scalars. GL and cash-book filters now use offset-free timestamps, with `23:59:59.999` as the inclusive final instant of the requested end date. MCP regression tests model this API contract and verify an entry in the final fractional second is included.
+
 ## Verify after deployment
 
-1. Confirm `/health` reports version `1.2.0` and unauthenticated `/mcp` remains rejected.
+1. Confirm `/health` reports version `1.2.1` and unauthenticated `/mcp` remains rejected.
 2. Refresh the existing OAuth plugin's metadata, then start a new conversation.
 3. Call `get_connection_info`. Confirm the actual endpoint is the intended demo endpoint and confirm the correct current entity. Separately verify the API token's owner/data scope in Xledger.
 4. Repeat open AP/AR tests with positive and negative remaining balances. Check list completeness before presenting totals.

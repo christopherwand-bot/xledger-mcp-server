@@ -130,6 +130,28 @@ describe("financial pilot through the actual MCP protocol", () => {
     expect(run).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ["get_journal_entries", "journalEntries"],
+    ["get_cash_transactions", "cashBookTransactions"],
+  ])("uses Xledger's offset-free timestamps and includes the final second in %s", async (name, root) => {
+    const records = [
+      { dbId: 1, fiscalYear: 2026, createdAt: "2026-04-30T23:59:59.500" },
+      { dbId: 2, fiscalYear: 2026, createdAt: "2026-05-01T00:00:00.000" },
+    ];
+    const run = vi.fn(async query => {
+      const from = /createdAt_gte:\s*"([^"]+)"/.exec(query)![1];
+      const to = /createdAt_lte:\s*"([^"]+)"/.exec(query)![1];
+      // Contract observed from Xledger: these scalar arguments reject offsets.
+      const valid = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?$/;
+      if (!valid.test(from) || !valid.test(to)) throw new Error("Bad format for createdAt: time-zone suffix is not supported");
+      return page(root, records.filter(row => row.createdAt >= from && row.createdAt <= to));
+    });
+    const { call } = await connect(run);
+    const result = await call(name, { first: 5, fromDate: "2026-04-01", toDate: "2026-04-30" });
+    expect(result.error).toBe(false);
+    expect(result.data.items.map((row: any) => row.dbId)).toEqual([1]);
+  });
+
   it("hides personnel tools and refuses personnel deltas in the default pilot", async () => {
     vi.stubEnv("XLEDGER_ENABLE_PERSONNEL_TOOLS", "");
     const run = vi.fn();

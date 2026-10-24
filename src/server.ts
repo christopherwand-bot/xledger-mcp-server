@@ -22,7 +22,7 @@ import { legacyBearerAllowed } from "./oauth.js";
 
 import { listResult, openBalanceFilter, summarizeInvoices, compareBalances } from "./finance.js";
 
-export const VERSION = "1.2.0";
+export const VERSION = "1.2.1";
 export function createMcpServer(gql = defaultGql) {
   const server = new McpServer({
     name: "xledger",
@@ -447,8 +447,8 @@ server.tool(
   async ({ first, fromDate, toDate, fiscalYear, includeProject, includeHealthDetail }) => {
     validateDateRange(fromDate, toDate);
     const filters: string[] = [];
-    if (fromDate) filters.push(`createdAt_gte: "${fromDate}T00:00:00Z"`);
-    if (toDate) filters.push(`createdAt_lte: "${toDate}T23:59:59Z"`);
+    if (fromDate) filters.push(`createdAt_gte: "${fromDate}T00:00:00"`);
+    if (toDate) filters.push(`createdAt_lte: "${toDate}T23:59:59.999"`);
     const nodes = await paginateAll(gql, after => `{
       journalEntries(first: 500${after}${filterClause(filters)}, orderBy: [{ field: CREATED_AT, direction: DESC }]) {
         pageInfo { hasNextPage }
@@ -937,8 +937,8 @@ server.tool(
     // time). Date-only strings are rejected silently (null data), so expand them.
     // postedBankDate is NOT a filter field.
     const filters: string[] = [];
-    if (fromDate) filters.push(`createdAt_gte: "${fromDate}T00:00:00Z"`);
-    if (toDate) filters.push(`createdAt_lte: "${toDate}T23:59:59Z"`);
+    if (fromDate) filters.push(`createdAt_gte: "${fromDate}T00:00:00"`);
+    if (toDate) filters.push(`createdAt_lte: "${toDate}T23:59:59.999"`);
 
     const query = (filterStr: string) => `{
       cashBookTransactions(first: ${Math.min(first, 500)}${filterStr}, orderBy: [{ field: MODIFIED_AT, direction: DESC }]) {

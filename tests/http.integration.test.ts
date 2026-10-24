@@ -65,7 +65,7 @@ describe("real HTTP transport with isolated dummy credentials", () => {
   it("reports the deployed code version without exposing credentials", async () => {
     const response = await fetch(url + "/health");
     const data = await response.json();
-    expect(data).toMatchObject({ status: "ok", version: "1.2.0" });
+    expect(data).toMatchObject({ status: "ok", version: "1.2.1" });
     expect(JSON.stringify(data)).not.toContain(secret);
   });
 
