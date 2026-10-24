@@ -3,6 +3,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createMcpServer } from "../src/server.js";
 import type { GqlRunner } from "../src/graphql.js";
+import { apiNode } from "./invoice-fixtures.js";
 
 const sessions: Array<{ close: () => Promise<void> }> = [];
 beforeEach(() => vi.stubEnv("XLEDGER_ENABLE_PERSONNEL_TOOLS", ""));
@@ -33,6 +34,18 @@ async function connect(run: GqlRunner) {
 }
 
 describe("financial pilot through the actual MCP protocol", () => {
+  it("finds an exact invoice's transaction-header original through the MCP tool", async () => {
+    const run = vi.fn(async (query: string) => query.includes("entities(") ? page("entities", [{ dbId: 7 }]) : page("apTransactions", [apiNode(10)]));
+    const { client, call } = await connect(run);
+    const result = await call("get_invoice_documents", { invoiceDbId: "10" });
+    expect(result.error).toBe(false);
+    expect(result.data.invoice.documents[0]).toMatchObject({ dbId: "110", sourcePath: "apTransactions.transactionHeader.invoiceFile" });
+    expect(JSON.stringify(result.data)).not.toContain("signature");
+    const { tools } = await client.listTools();
+    for (const name of ["read_invoice_document", "start_invoice_scan", "get_invoice_scan", "resume_invoice_scan", "get_item_price_history"]) {
+      expect(tools.find(t => t.name === name)?.annotations?.readOnlyHint).toBe(true);
+    }
+  });
   it("returns BOTH negative supplier invoices and positive credit balances as open items", async () => {
     const input = [
       { dbId: 1, invoiceNumber: "TEST-INVOICE", invoiceRemaining: "-100.0000" },
@@ -60,6 +73,11 @@ describe("financial pilot through the actual MCP protocol", () => {
     ["get_invoice_line_records", { source: "journalEntries" }],
     ["get_invoice_line_records", { source: "eInvoiceDetails", first: 51 }],
     ["get_invoice_line_records", { source: "eInvoiceDetails", includeReferences: "yes" }],
+    ["get_invoice_documents", { invoiceDbId: '1} mutation{' }],
+    ["read_invoice_document", { invoiceDbId: "10", source: "eInvoices" }],
+    ["start_invoice_scan", { fromDate: "2026-02-30", toDate: "2026-03-01" }],
+    ["get_invoice_scan", { scanId: "../../etc/passwd" }],
+    ["get_item_price_history", { scanId: "invalid" }],
   ])("rejects invalid input to %s before querying Xledger", async (name, args) => {
     const run = vi.fn();
     const { call } = await connect(run);
@@ -184,7 +202,7 @@ describe("financial pilot through the actual MCP protocol", () => {
     const { call } = await connect(async () => ({ t0: { name: "SalesOrderDetail", fields: [{ name: "quantity" }, { name: "unitPrice" }] }, t1: null, t2: null, t3: null }));
     const result = await call("get_invoice_line_capabilities");
     expect(result.data.sources[0]).toMatchObject({ hasQuantity: true, hasUnitPrice: true, foundInSchema: true });
-    expect(result.data).toMatchObject({ lineReadingImplemented: false, supplierInvoiceLinesVerified: false, documentExtractionImplemented: false });
+    expect(result.data).toMatchObject({ lineReadingImplemented: true, supplierInvoiceLinesVerified: false, documentExtractionImplemented: true });
     expect(result.data.permissionNote).toContain("does not establish");
   });
 
