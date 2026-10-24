@@ -5,8 +5,8 @@ import type { GqlRunner } from "./graphql.js";
 export const INVOICE_RECORD_SOURCES = ["eInvoiceDetails", "vendorInvoiceDetails", "invoiceBaseItems"] as const;
 export type InvoiceRecordSource = typeof INVOICE_RECORD_SOURCES[number];
 const SOURCES = {
-  eInvoiceDetails: { node: "EInvoiceDetail", parentFilter: "eInvoiceDbId", kind: "electronic_invoice_detail" },
-  vendorInvoiceDetails: { node: "VendorInvoiceDetail", parentFilter: "vendorInvoiceDbId", kind: "supplier_invoice_detail" },
+  eInvoiceDetails: { node: "EInvoiceDetail", parentFilter: null, kind: "electronic_invoice_detail" },
+  vendorInvoiceDetails: { node: "VendorInvoiceDetail", parentFilter: "headerDbId", kind: "supplier_invoice_detail" },
   invoiceBaseItems: { node: "InvoiceBaseItem", parentFilter: "salesOrderHeaderDbId", kind: "sales_invoice_basis" },
 } as const;
 
@@ -24,8 +24,14 @@ const SCALAR_FIELDS = new Set([
   "amount", "taxAmount", "taxPercent", "discount", "discountAmount", "discountPercent",
   "extProductNumber", "productNumber", "eInvoiceDbId", "vendorInvoiceDbId",
   "salesOrderHeaderDbId", "salesOrderDetailDbId",
+  // Names confirmed on the actual EInvoiceDetail/VendorInvoiceDetail schema.
+  "unitPriceFactor", "unitPriceAmount", "discountPct", "taxPct", "regularAmount", "taxAmount2",
+  "discountDescription", "externalProduct", "externalProductNumber", "positionNumber", "headerDbId", "accountDbId",
 ]);
-const RELATIONS = new Set(["eInvoice", "vendorInvoice", "product", "unit", "currency"]);
+// Product is a separate master-data permission. Supplier descriptions already
+// have scalar externalProduct/externalProductNumber fields; never require the
+// product catalogue merely to read a financial detail row.
+const REFERENCE_RELATIONS = new Set(["eInvoiceHeader", "header", "unit", "basicUnit", "currency", "unitQuantity", "unitNumber"]);
 const RELATED_SCALARS = new Set([
   ...SCALAR_FIELDS, "code", "name", "isoCode", "supplierDbId", "subledgerDbId", "companyDbId",
 ]);
@@ -83,12 +89,14 @@ export async function inspectInvoiceRecordSources(run: GqlRunner) {
 }
 
 export async function readInvoiceLineRecords(run: GqlRunner, options: {
-  source: InvoiceRecordSource; first: number; after?: string; invoiceDbId?: string;
+  source: InvoiceRecordSource; first: number; after?: string; invoiceDbId?: string; includeReferences?: boolean;
 }) {
   const config = SOURCES[options.source];
   if (!INVOICE_RECORD_SOURCES.includes(options.source) || !config || !Number.isInteger(options.first) || options.first < 1 || options.first > 50) throw new Error("Invalid invoice record source or page size");
   if (options.invoiceDbId !== undefined && !/^[1-9]\d{0,18}$/.test(options.invoiceDbId)) throw new Error("invoiceDbId must be a positive source-header ID");
   if (options.after !== undefined && (options.after.length < 1 || options.after.length > 2000)) throw new Error("Invalid continuation cursor");
+  if (options.includeReferences !== undefined && typeof options.includeReferences !== "boolean") throw new Error("includeReferences must be a boolean");
+  if (options.invoiceDbId && !config.parentFilter) throw new Error("The current EInvoiceDetail schema has no direct parent invoice ID filter; no unfiltered fallback was performed");
 
   const source = (await inspectSources(run)).find(item => item.source === options.source)!;
   if (base(source.root?.type)?.name !== `${config.node}Connection` || !source.node) throw new Error(`The current schema does not expose the verified ${options.source} connection`);
@@ -96,7 +104,8 @@ export async function readInvoiceLineRecords(run: GqlRunner, options: {
   if (!["first", "after", "ownerSet"].every(name => argNames.has(name))) throw new Error("The source cannot be read with the required bounded pagination and CURRENT owner scope");
   const scalarFields = fields(source.node).filter(field => SCALAR_FIELDS.has(field.name) && scalar(field));
   if (!scalarFields.some(field => field.name === "dbId")) throw new Error("The source has no supported record identity field");
-  const relations = fields(source.node).filter(field => RELATIONS.has(field.name) && base(field.type)?.kind === "OBJECT" && !field.args?.some(arg => arg.type?.kind === "NON_NULL"));
+  const availableReferences = fields(source.node).filter(field => REFERENCE_RELATIONS.has(field.name));
+  const relations = options.includeReferences ? availableReferences.filter(field => base(field.type)?.kind === "OBJECT" && !field.args?.some(arg => arg.type?.kind === "NON_NULL")) : [];
   // Do not follow lists or arbitrary relationships, even if their element type
   // happens to match an allowed relation. This reader is intentionally shallow.
   const singularRelations = relations.filter(field => {
@@ -137,6 +146,7 @@ export async function readInvoiceLineRecords(run: GqlRunner, options: {
   const nextCursor = hasMore && typeof lastCursor === "string" && lastCursor.length > 0 && lastCursor !== options.after ? lastCursor : null;
   const complete = Boolean(connection) && hasMore === false && !options.after;
   const warnings = ["Raw structured records are not yet reconciled against original supplier invoices. Quantities, prices, units, discounts and price bases retain their source field names; no price per kilogram is inferred."];
+  if (!options.includeReferences) warnings.push("Unit, currency and header reference objects are omitted by default. Request includeReferences=true to read them with the corresponding permissions; unit and invoice linkage are not verified by this minimal page.");
   if (!complete) warnings.push("This page is not the complete source. Continue with nextCursor when available; do not calculate full-period totals from this page.");
   if (hasMore && !nextCursor) warnings.push("More records are reported, but no usable continuation cursor was returned.");
   if (!scalarFields.some(field => ["quantity", "invoicedQuantity"].includes(field.name))) warnings.push("No supported quantity field was found; missing quantities are not zero.");
@@ -147,6 +157,7 @@ export async function readInvoiceLineRecords(run: GqlRunner, options: {
     complete, sourceComplete: complete, hasMore, nextCursor,
     isContinuation: Boolean(options.after),
     parentFilter: options.invoiceDbId ? { field: config.parentFilter, dbId: options.invoiceDbId } : null,
+    referencesIncluded: Boolean(options.includeReferences), referenceFieldsAvailable: availableReferences.map(describe),
     selectedFields: scalarFields.map(describe), selectedRelations: nested.map(field => ({ name: field.name, fields: field.fields.map(describe) })),
     recordReadPermission: edges.length ? "succeeded_for_returned_records" : "accepted_without_records; row_access_not_verified",
     originalSupplierProductLinesVerified: false, documentExtractionImplemented: false,
