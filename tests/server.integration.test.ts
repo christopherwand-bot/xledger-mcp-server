@@ -183,4 +183,29 @@ describe("financial pilot through the actual MCP protocol", () => {
     expect(result.data).toMatchObject({ lineReadingImplemented: false, supplierInvoiceLinesVerified: false, documentExtractionImplemented: false });
     expect(result.data.permissionNote).toContain("does not establish");
   });
+
+
+  it("discovers a schema path to line types without reading business records", async () => {
+    const run = vi.fn(async (query: string) => {
+      if (query.includes("__schema")) return {
+        __schema: { queryType: { fields: [
+          { name: "invoiceBaseItems", args: [{ name: "first", type: { kind: "SCALAR", name: "Int" } }], type: { kind: "OBJECT", name: "InvoiceBaseItemConnection" } },
+          { name: "customers", args: [], type: { kind: "OBJECT", name: "CustomerConnection" } },
+        ] } },
+      };
+      if (query.includes('InvoiceBaseItemConnection')) return { t0: { name: "InvoiceBaseItemConnection", fields: [{ name: "edges", type: { kind: "LIST", ofType: { kind: "OBJECT", name: "InvoiceBaseItemEdge" } } }] } };
+      if (query.includes('InvoiceBaseItemEdge')) return { t0: { name: "InvoiceBaseItemEdge", fields: [{ name: "node", type: { kind: "OBJECT", name: "InvoiceBaseItem" } }] } };
+      throw new Error(`Unexpected query: ${query}`);
+    });
+    const { call } = await connect(run);
+    const result = await call("discover_invoice_line_read_paths");
+    expect(result.error).toBe(false);
+    expect(result.data.paths).toContainEqual(expect.objectContaining({
+      rootField: "invoiceBaseItems",
+      leadsToKnownLineType: true,
+      connectionShape: expect.objectContaining({ nodeType: "InvoiceBaseItem" }),
+    }));
+    expect(result.data.recordReadingImplemented).toBe(false);
+    expect(result.data.permissionNote).toContain("does not prove");
+  });
 });

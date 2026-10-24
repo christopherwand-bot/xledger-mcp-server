@@ -17,12 +17,12 @@ import {
   type AbsenceRow,
 } from "./absences.js";
 import { aggregateConsultants } from "./profitability.js";
-import { inspectInvoiceLineCapabilities } from "./invoice-lines.js";
+import { discoverInvoiceLineReadPaths, inspectInvoiceLineCapabilities } from "./invoice-lines.js";
 import { legacyBearerAllowed } from "./oauth.js";
 
 import { listResult, openBalanceFilter, summarizeInvoices, compareBalances } from "./finance.js";
 
-export const VERSION = "1.2.1";
+export const VERSION = "1.2.2";
 export function createMcpServer(gql = defaultGql) {
   const server = new McpServer({
     name: "xledger",
@@ -86,6 +86,14 @@ server.tool(
   {},
   READ_ONLY,
   async () => json(await inspectInvoiceLineCapabilities(gql))
+);
+
+server.tool(
+  "discover_invoice_line_read_paths",
+  "Find the actual read-only GraphQL query paths that may lead to invoice or order lines. This only inspects the schema; it does not retrieve business records or prove permissions.",
+  {},
+  READ_ONLY,
+  async () => json(await discoverInvoiceLineReadPaths(gql))
 );
 
 // ─── Tool: get_ar_transactions ───────────────────────────────────────────────
