@@ -33,10 +33,11 @@
     "url": "https://github.com/Eyevinn/xledger-mcp-server.git"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.0.0"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.26.0"
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "jose": "^6.1.2"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
