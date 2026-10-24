@@ -20,9 +20,11 @@ function backend(options: {
       __schema: { queryType: { fields: options.roots ?? [root("eInvoiceDetails", "EInvoiceDetail"), root("invoiceBaseItems", "InvoiceBaseItem")] } },
       n0: { name: "EInvoiceDetail", fields: options.nodeFields ?? [
         scalar("dbId", "Int64String"), scalar("ownerDbId", "Int"), scalar("quantity", "Float"),
-        scalar("unitPrice", "MoneyString"), scalar("baseQuantity", "Float"),
+        scalar("unitPrice", "Float"), scalar("unitPriceAmount", "MoneyString"), scalar("unitPriceFactor", "Float"),
         scalar("discountAmount", "MoneyString"), scalar("amount", "MoneyString"),
-        object("unit", "Unit"), object("currency", "Currency"), object("eInvoice", "EInvoice"),
+        scalar("externalProduct"), scalar("externalProductNumber"),
+        object("unit", "ObjectValue"), object("currency", "Currency"), object("eInvoiceHeader", "EInvoice"),
+        object("product", "Product"),
         object("employee", "Employee"), object("unrelatedDocuments", "Document"),
       ] },
       n1: null,
@@ -38,13 +40,14 @@ function backend(options: {
       return result;
     }
     readQueries.push(query);
+    if (/\bproduct\s*\{/.test(query)) throw new Error("No Product read permission");
     if (options.recordError) throw options.recordError;
     if (options.missingConnection) return { eInvoiceDetails: null };
     const source = query.includes("invoiceBaseItems(") ? "invoiceBaseItems" : "eInvoiceDetails";
     return { [source]: {
       pageInfo: options.more === null ? null : { hasNextPage: options.more ?? false },
-      edges: options.missingEdges ? undefined : (options.rows ?? [{ dbId: "9007199254740993", quantity: -2, unitPrice: "123.4500", baseQuantity: 100,
-        discountAmount: "0.0000", amount: "-2.4690", unit: { code: "KG" }, currency: { code: "NOK" }, eInvoice: { dbId: "111", invoiceNumber: "SYNTHETIC-CREDIT" } }])
+      edges: options.missingEdges ? undefined : (options.rows ?? [{ dbId: "9007199254740993", quantity: -2, unitPrice: 123.45, unitPriceAmount: "123.4500", unitPriceFactor: 100,
+        discountAmount: "0.0000", amount: "-2.4690", unit: { code: "KG" }, currency: { code: "NOK" }, eInvoiceHeader: { dbId: "111", invoiceNumber: "SYNTHETIC-CREDIT" } }])
         .map(node => ({ node, ...(options.next !== undefined ? { cursor: options.next } : {}) })),
     } };
   });
@@ -54,13 +57,22 @@ function backend(options: {
 describe("bounded invoice records", () => {
   it("preserves exact source amounts, credit quantities, zero discounts and price basis without calculating a unit price", async () => {
     const { run, readQueries } = backend();
-    const result = await readInvoiceLineRecords(run, { source: "eInvoiceDetails", first: 1 });
-    expect(result.items[0]).toMatchObject({ dbId: "9007199254740993", quantity: -2, unitPrice: "123.4500", baseQuantity: 100, discountAmount: "0.0000" });
+    const result = await readInvoiceLineRecords(run, { source: "eInvoiceDetails", first: 1, includeReferences: true });
+    expect(result.items[0]).toMatchObject({ dbId: "9007199254740993", quantity: -2, unitPrice: 123.45, unitPriceAmount: "123.4500", unitPriceFactor: 100, discountAmount: "0.0000" });
     expect(result).toMatchObject({ complete: true, ownerScope: "CURRENT", normalizedUnitPrice: null, originalSupplierProductLinesVerified: false });
     expect(readQueries).toHaveLength(1);
     expect(readQueries[0]).toContain("first: 1, ownerSet: CURRENT");
-    expect(readQueries[0]).not.toMatch(/employee|unrelatedDocuments|mutation/);
-    expect(result.selectedRelations.map(field => field.name)).toEqual(["unit", "currency", "eInvoice"]);
+    expect(readQueries[0]).not.toMatch(/employee|unrelatedDocuments|mutation|\bproduct\s*\{/);
+    expect(result.selectedRelations.map(field => field.name)).toEqual(["unit", "currency", "eInvoiceHeader"]);
+  });
+
+  it("reads supplier text and financial scalars by default without requiring Product or any reference objects", async () => {
+    const { run, readQueries } = backend({ rows: [{ dbId: "1", quantity: 2, unitPrice: 5, unitPriceFactor: 1, externalProduct: "Synthetic flour", externalProductNumber: "TEST-1" }] });
+    const result = await readInvoiceLineRecords(run, { source: "eInvoiceDetails", first: 1 });
+    expect(result).toMatchObject({ referencesIncluded: false, selectedRelations: [] });
+    expect(result.items[0]).toMatchObject({ externalProduct: "Synthetic flour", externalProductNumber: "TEST-1", unitPriceFactor: 1 });
+    expect(readQueries[0]).not.toMatch(/\b(product|unit|currency|eInvoiceHeader)\s*\{/);
+    expect(result.warnings.join(" ")).toContain("unit and invoice linkage are not verified");
   });
 
   it("does not invent missing quantity or unit-price fields", async () => {
@@ -137,10 +149,25 @@ describe("bounded invoice records", () => {
   });
 
   it("uses only a schema-confirmed parent filter and preserves large source IDs", async () => {
-    const { run, readQueries } = backend({ parentFilter: scalar("eInvoiceDbId", "Int64String") });
-    const result = await readInvoiceLineRecords(run, { source: "eInvoiceDetails", first: 1, invoiceDbId: "9007199254740993" });
-    expect(readQueries[0]).toContain('filter: { eInvoiceDbId: "9007199254740993" }');
+    const { run, readQueries } = backend({ parentFilter: scalar("salesOrderHeaderDbId", "Int64String") });
+    const result = await readInvoiceLineRecords(run, { source: "invoiceBaseItems", first: 1, invoiceDbId: "9007199254740993" });
+    expect(readQueries[0]).toContain('filter: { salesOrderHeaderDbId: "9007199254740993" }');
     expect(result.parentFilter?.dbId).toBe("9007199254740993");
+  });
+
+  it("uses the actual VendorInvoiceDetail headerDbId filter rather than a guessed vendorInvoiceDbId", async () => {
+    const run = vi.fn(async (query: string) => {
+      if (query.includes("__schema")) return {
+        __schema: { queryType: { fields: [root("vendorInvoiceDetails", "VendorInvoiceDetail")] } },
+        n1: { fields: [scalar("dbId", "Int"), scalar("headerDbId", "Int"), scalar("quantity", "Float")] },
+      };
+      if (query.includes("__type")) return { filter: { inputFields: [scalar("headerDbId", "Int")] } };
+      expect(query).toContain("filter: { headerDbId: 123 }");
+      expect(query).not.toContain("vendorInvoiceDbId");
+      return { vendorInvoiceDetails: { pageInfo: { hasNextPage: false }, edges: [{ node: { dbId: 1, headerDbId: 123, quantity: 2 } }] } };
+    });
+    const result = await readInvoiceLineRecords(run, { source: "vendorInvoiceDetails", first: 1, invoiceDbId: "123" });
+    expect(result.parentFilter).toEqual({ field: "headerDbId", dbId: "123" });
   });
 
   it("refuses a source that cannot be scoped to CURRENT", async () => {

@@ -23,7 +23,7 @@ Live GL validation established that Xledger rejects a `Z` offset on the createdA
 
 ## Verify after deployment
 
-1. Confirm `/health` reports the version being deployed (`1.3.0` for the structured-record reader) and unauthenticated `/mcp` remains rejected.
+1. Confirm `/health` reports the version being deployed (`1.3.1` for the minimal-read correction) and unauthenticated `/mcp` remains rejected.
 2. Refresh the existing OAuth plugin's metadata, then start a new conversation.
 3. Call `get_connection_info`. Confirm the actual endpoint is the intended demo endpoint and confirm the correct current entity. Separately verify the API token's owner/data scope in Xledger.
 4. Repeat open AP/AR tests with positive and negative remaining balances. Check list completeness before presenting totals.
@@ -35,7 +35,15 @@ Live GL validation established that Xledger rejects a `Z` offset on the createdA
 
 The authenticated demo-schema discovery on 24 October 2026 inspected 305 query fields. It confirmed `eInvoiceDetails → EInvoiceDetail`, `vendorInvoiceDetails → VendorInvoiceDetail`, and `invoiceBaseItems → InvoiceBaseItem`. It also found electronic and vendor invoice header connections. This proves the API paths exist, not that the token can read their records or that a detail is an original supplier product line.
 
-Version 1.3.0 adds `get_invoice_line_records` for those three detail connections. The reader checks query shape and fields against the active schema before requesting records. It returns only supported financial fields and shallow product/unit/currency/header identities. Named employee relations and unrelated document lists are excluded. Exact source values, nulls, credit quantities and price-basis fields are preserved; normalization and reconciliation remain unverified.
+Version 1.3.0 adds `get_invoice_line_records` for those three detail connections. The reader checks query shape and fields against the active schema before requesting records. Named employee relations and unrelated document lists are excluded. Exact source values, nulls, credit quantities and price-basis fields are preserved; normalization and reconciliation remain unverified.
+
+### Live minimal-read correction in 1.3.1
+
+The first electronic-invoice record request was rejected because the optional nested Product lookup required a separate `Product` permission. The vendor-detail request was accepted with no rows; this does not verify record-level access or prove zero supplier purchases.
+
+The corrected default selects only financial scalars, including supplier-provided product text/number and the schema-confirmed electronic-invoice price factor, monetary unit-price amount and discount/tax percentage fields. It never selects the Product master. `includeReferences: true` explicitly adds shallow unit/currency/header objects and preserves any resulting permission error. Without it, units and header linkage remain unverified and are reported as such. Existing `source`/`first` calls work with the new default without reloading metadata; reload is needed only to expose the optional parameter.
+
+Actual schema inspection confirmed the vendor parent field/filter is `headerDbId`, with relation `header`. Electronic-invoice details have relation `eInvoiceHeader` but no direct parent header ID filter. The code now uses those names and rejects unsupported electronic-invoice parent filters before any unfiltered read.
 
 The default is one record, with a maximum of 50 per page. Every data query explicitly uses `ownerSet: CURRENT`. A parent ID filter is used only when its exact name and scalar type are confirmed by introspection. No unfiltered retry, alternate-source fallback, document download or mutation is performed. Missing fields, nulls, empty results and permission failures are not replaced with zeros.
 

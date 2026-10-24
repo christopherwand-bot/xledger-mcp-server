@@ -59,6 +59,7 @@ describe("financial pilot through the actual MCP protocol", () => {
     ["get_exchange_rates", { fromCurrency: 'NOK" injected' }],
     ["get_invoice_line_records", { source: "journalEntries" }],
     ["get_invoice_line_records", { source: "eInvoiceDetails", first: 51 }],
+    ["get_invoice_line_records", { source: "eInvoiceDetails", includeReferences: "yes" }],
   ])("rejects invalid input to %s before querying Xledger", async (name, args) => {
     const run = vi.fn();
     const { call } = await connect(run);
@@ -202,7 +203,7 @@ describe("financial pilot through the actual MCP protocol", () => {
     const result = await call("get_invoice_line_records", { source: "eInvoiceDetails" });
     expect(result.error).toBe(false);
     expect(result.data.items).toEqual([{ dbId: "100", quantity: -2.5, unitPrice: "12.3400" }]);
-    expect(result.data).toMatchObject({ originalSupplierProductLinesVerified: false, normalizedUnitPrice: null });
+    expect(result.data).toMatchObject({ originalSupplierProductLinesVerified: false, normalizedUnitPrice: null, referencesIncluded: false });
   });
 
 
