@@ -93,13 +93,29 @@ export class InvoiceScans {
   }
   private async work(scan: InvoiceScan) {
     const pageRecords = new Map<string, SourceInvoice>();
+    const fetchedAt = new Map<string, number>();
     while (true) {
       if (scan.pending.length) {
         const next = scan.pending[0];
         const key = `${next.source}:${next.dbId}`;
         let read: InvoiceRead;
         try {
-          const invoice = pageRecords.get(key) ?? await getSourceInvoice(this.run, next.source, next.dbId, scan.owner);
+          const cached = pageRecords.get(key);
+          // Xledger's observed signed Url uses valid_until as Unix seconds.
+          // An OCR-heavy queue can outlive its page's links. Refresh through the
+          // exact scoped record, never by changing or extending the signed URL.
+          const expiring = cached?.documents.some(d => {
+            try {
+              const until = new URL(d.url, this.apiOrigin).searchParams.get("valid_until");
+              return until != null && /^\d{10}$/.test(until) && Number(until) * 1000 <= Date.now() + 15_000;
+            } catch { return true; }
+          });
+          const stale = !cached || Date.now() - (fetchedAt.get(key) ?? 0) > 60_000 || expiring;
+          const invoice = stale ? await getSourceInvoice(this.run, next.source, next.dbId, scan.owner) : cached;
+          if (!invoice.invoiceDate || invoice.invoiceDate < scan.options.fromDate || invoice.invoiceDate > scan.options.toDate ||
+              (scan.options.supplierId && invoice.supplierId !== scan.options.supplierId) ||
+              (scan.options.supplierName && !normalized(invoice.supplier || "").includes(normalized(scan.options.supplierName))))
+            throw new Error("Invoice changed outside the selected period/supplier scope during the scan");
           read = checkpointRead((await this.reader(invoice, this.apiOrigin)).result);
         } catch (error) {
           // Preserve the queued invoice identity when document/permission reads fail.
@@ -114,7 +130,7 @@ export class InvoiceScans {
         }
         const index = scan.invoices.findIndex(r => r.invoice.source === next.source && r.invoice.dbId === next.dbId);
         if (index >= 0) scan.invoices[index] = read; else scan.invoices.push(read);
-        scan.pending.shift(); pageRecords.delete(key);
+        scan.pending.shift(); pageRecords.delete(key); fetchedAt.delete(key);
         await this.save(scan);
         // Pace metadata reads below Xledger's documented burst limit.
         await new Promise(resolve => setTimeout(resolve, 275));
@@ -136,7 +152,7 @@ export class InvoiceScans {
           const key = `${row.source}:${row.dbId}`;
           scan.seenRecords.push(key); scan.scannedRecords++;
           if (scan.options.supplierName && !normalized(row.supplier || "").includes(normalized(scan.options.supplierName))) { scan.filteredRecords++; continue; }
-          scan.pending.push({ source: row.source, dbId: row.dbId }); pageRecords.set(key, row);
+          scan.pending.push({ source: row.source, dbId: row.dbId }); pageRecords.set(key, row); fetchedAt.set(key, Date.now());
         }
         stream.pages++;
         stream.enumerated = !page.hasMore;

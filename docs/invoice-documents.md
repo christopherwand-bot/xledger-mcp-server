@@ -9,7 +9,7 @@ Authenticated demo introspection and record reads on 2026-10-24 verified:
 - `APTransaction` (capital AP), `VendorInvoice`, `TransactionHeader` and `Url`.
 - CURRENT-owner `apTransactions`/`vendorInvoices` connections, bounded `first`/`after`, date, exact ID and supplier filters.
 - `invoiceFile { dbId ownerDbId url fileName }` and `transactionHeader { dbId ownerDbId invoiceFile { ... } }`.
-- Real AP records whose direct `invoiceFile` is null but whose transaction header has the original document reference.
+- Real AP records whose direct `invoiceFile` is null but whose transaction header has the original document reference. Observed signed links carry a Unix-seconds `valid_until`; a scan refreshes expiring/aged links through the exact invoice before reading them.
 
 An actual signed demo file URL returned HTTP 404, both without and with same-origin API authentication in a diagnostic check. The implementation uses the signed URL without forwarding credentials. A document reference therefore does not establish download availability. Demo file availability is a remaining live-environment dependency, not a completed end-to-end download test.
 

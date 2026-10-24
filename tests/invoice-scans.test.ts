@@ -23,6 +23,22 @@ describe("full-period invoice scan", () => {
     expect(sharedInvoiceScans(run, "https://demo.xledger.net/graphql")).toBe(sharedInvoiceScans(run, "https://demo.xledger.net/graphql"));
     expect(sharedInvoiceScans(run, "https://demo.xledger.net/graphql")).not.toBe(sharedInvoiceScans(run, "https://www.xledger.net/graphql"));
   });
+  it("renews an expired signed link through the exact invoice before reading it", async () => {
+    const old = apiNode(10), fresh = apiNode(10);
+    old.transactionHeader.invoiceFile.url += `&valid_until=${Math.floor(Date.now() / 1000) - 60}`;
+    fresh.transactionHeader.invoiceFile.url += `&valid_until=${Math.floor(Date.now() / 1000) + 600}`;
+    const run = vi.fn(async (q: string) => q.includes("entities(") ? entity : connection("apTransactions", [q.includes("dbId: 10") ? fresh : old]));
+    const readFresh = vi.fn(async (invoice: any, origin: string) => {
+      const until = new URL(invoice.documents[0].url).searchParams.get("valid_until");
+      expect(Number(until) * 1000).toBeGreaterThan(Date.now());
+      return reader()(invoice, origin);
+    });
+    const scans = new InvoiceScans(run, "https://demo.xledger.net/graphql", await folder(), readFresh);
+    const start = await scans.start(options); await scans.waitForIdle();
+    expect((await scans.get(start.scanId)).coverage.allInvoicesRead).toBe(true);
+    expect(readFresh).toHaveBeenCalledTimes(1);
+    expect(run.mock.calls.filter(([q]) => q.includes("dbId: 10"))).toHaveLength(1);
+  });
   it("continues through every source page, records every invoice and never calls an early page complete", async () => {
     const run = vi.fn(async (q: string) => {
       if (q.includes("entities(")) return entity;
