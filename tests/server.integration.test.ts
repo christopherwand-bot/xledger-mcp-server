@@ -57,6 +57,8 @@ describe("financial pilot through the actual MCP protocol", () => {
     ["get_budget_vs_actual", { periodNumber: 0 }],
     ["get_ar_transactions", { first: -1 }],
     ["get_exchange_rates", { fromCurrency: 'NOK" injected' }],
+    ["get_invoice_line_records", { source: "journalEntries" }],
+    ["get_invoice_line_records", { source: "eInvoiceDetails", first: 51 }],
   ])("rejects invalid input to %s before querying Xledger", async (name, args) => {
     const run = vi.fn();
     const { call } = await connect(run);
@@ -162,6 +164,7 @@ describe("financial pilot through the actual MCP protocol", () => {
     expect(names).not.toContain("get_absences");
     expect(names).not.toContain("get_expenses");
     expect(names).toContain("get_connection_info");
+    expect(names).toContain("get_invoice_line_records");
     expect(tools.every(t => t.annotations?.readOnlyHint === true)).toBe(true);
     expect((await call("get_deltas", { entity: "employees" })).error).toBe(true);
     expect(run).not.toHaveBeenCalled();
@@ -182,6 +185,24 @@ describe("financial pilot through the actual MCP protocol", () => {
     expect(result.data.sources[0]).toMatchObject({ hasQuantity: true, hasUnitPrice: true, foundInSchema: true });
     expect(result.data).toMatchObject({ lineReadingImplemented: false, supplierInvoiceLinesVerified: false, documentExtractionImplemented: false });
     expect(result.data.permissionNote).toContain("does not establish");
+  });
+
+  it("reads a minimal structured invoice record through the registered MCP tool", async () => {
+    const run = vi.fn(async (query: string) => {
+      const scalar = (name: string, type: string) => ({ name, type: { kind: "SCALAR", name: type } });
+      if (query.includes("__schema")) return {
+        __schema: { queryType: { fields: [{ name: "eInvoiceDetails", type: { kind: "OBJECT", name: "EInvoiceDetailConnection" },
+          args: [scalar("first", "Int"), scalar("after", "String"), scalar("ownerSet", "OwnerSet")] }] } },
+        n0: { fields: [scalar("dbId", "Int64String"), scalar("quantity", "Float"), scalar("unitPrice", "MoneyString")] },
+      };
+      expect(query).toContain("first: 1, ownerSet: CURRENT");
+      return page("eInvoiceDetails", [{ dbId: "100", quantity: -2.5, unitPrice: "12.3400" }]);
+    });
+    const { call } = await connect(run);
+    const result = await call("get_invoice_line_records", { source: "eInvoiceDetails" });
+    expect(result.error).toBe(false);
+    expect(result.data.items).toEqual([{ dbId: "100", quantity: -2.5, unitPrice: "12.3400" }]);
+    expect(result.data).toMatchObject({ originalSupplierProductLinesVerified: false, normalizedUnitPrice: null });
   });
 
 

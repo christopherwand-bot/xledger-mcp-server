@@ -6,7 +6,7 @@ Use it with Claude, VS Code Copilot, or any MCP-compatible AI assistant to query
 
 ## Features
 
-- 15 read-only financial and diagnostic tools enabled by default; 6 personnel/employee-expense tools require explicit opt-in
+- 17 read-only financial and diagnostic tools enabled by default; 6 personnel/employee-expense tools require explicit opt-in
 - Compatible with Xledger GraphQL API v2 (cursor pagination, v2 filter syntax)
 - OAuth 2.1 protection for remote ChatGPT connections; legacy bearer protection for non-web clients
 - GDPR Art. 9 guard on absence project and time-type names in `get_absences`, `get_timesheets`, `get_consultant_profitability`, `get_expenses` and `get_journal_entries`: no per-person health absence by default. Some fields are not covered; see [Not covered](#not-covered)
@@ -29,12 +29,20 @@ This release implements the demo-test findings. See [pilot readiness and access 
 
 Financial list payloads now contain `items`, `returned`, `matchedFetched`, `sourceComplete`, `complete`, and `hasMore`. Budget output keeps `rows`; customer lookup keeps `customers`. Consumers must check completeness before calculating totals.
 
+## Structured invoice records (1.3.0)
+
+`get_invoice_line_records` reads a bounded page from the schema-verified `eInvoiceDetails`, `vendorInvoiceDetails`, or `invoiceBaseItems` connection. It defaults to one record, scopes the query to `CURRENT`, checks available fields at runtime and preserves source values and field names. `invoiceBaseItems` is sales invoice basis, not supplier purchases.
+
+This is a record reader, not a certified supplier price analysis: the detail fields and token's record permissions still require live validation, and the records have not been reconciled with original supplier invoices. No EHF/PDF extraction, unit conversion or inferred price per kilogram is implemented. The existing capability tool now also reports the actual fields and filters of these three sources.
+
 ## Tools
 
 | Tool | Description |
 |------|-------------|
 | `get_connection_info` | Configured endpoint, environment, current entity and pilot restrictions; no secrets |
 | `get_invoice_line_capabilities` | Read-only schema discovery for invoice-line implementation; does not fetch invoice lines |
+| `discover_invoice_line_read_paths` | Read-only discovery of actual query roots, connections and node types |
+| `get_invoice_line_records` | One page of raw, schema-checked electronic/vendor invoice details or sales invoice basis; defaults to one record |
 | `get_ar_transactions` | Customer invoices (Accounts Receivable): filter by date, outstanding only |
 | `get_ap_transactions` | Supplier invoices (Accounts Payable): filter by date, outstanding only |
 | `get_account_balances` | GL account balances by fiscal year and period (cursor-paginated) |
@@ -240,6 +248,7 @@ The deploying organisation must assess these in its DPIA, or restrict access to 
 
 - **`get_account_balances` / `get_budget_vs_actual`:** Xledger v2 has no year filter on balances and no `offset`, so the server pages through balances newest-first with cursors and filters client-side. `periodNumber` returns that single period only; omit it for all periods of the year.
 - **Paginated tools** read at most 20 pages of 500 rows. Financial list outputs report `sourceComplete`, `complete`, `hasMore` and a warning when a source/page/output limit prevents completeness. Repeated or missing cursors are treated as incomplete. Invoice summaries report `complete` and a warning for incomplete sources.
+- **`get_invoice_line_records`** reads one page of at most 50 records, not 20 pages. Use `nextCursor` as `after` with the same source and parent filter. A continuation page is never labelled a complete source, even when it is the final page. Missing upstream pagination information is incomplete. Optional `invoiceDbId` means the source's own parent invoice/order header ID, not an AP transaction ID; if the exact parent filter is absent or unsupported, the request fails without an unfiltered fallback. Permission errors are propagated without trying another source.
 - **`get_revenue_summary`** aggregates numbered AR transactions in exact decimal arithmetic. Numbered payment/correction rows cannot be excluded reliably without confirmed transaction-type mapping, so the result explicitly does not certify invoice totals. There is no combined monetary total across currencies. For accrual-based figures, use GL balances.
 - **`get_customers`** reads all customers (cursor-paginated) before applying `search`, so a match is never missed because it was outside the first page.
 - **`get_invoice_proposals` / `get_invoiced_orders`** read the `salesOrders` connection (the order-level invoice overview). `invoiceNumber` `0` means not yet invoiced. `invoiceAmount` is net excluding VAT; `taxAmount` is the VAT. Reference fields (`yourReference`, `contract`) are compared at order level.

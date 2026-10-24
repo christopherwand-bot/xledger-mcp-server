@@ -18,11 +18,12 @@ import {
 } from "./absences.js";
 import { aggregateConsultants } from "./profitability.js";
 import { discoverInvoiceLineReadPaths, inspectInvoiceLineCapabilities } from "./invoice-lines.js";
+import { INVOICE_RECORD_SOURCES, inspectInvoiceRecordSources, readInvoiceLineRecords } from "./invoice-records.js";
 import { legacyBearerAllowed } from "./oauth.js";
 
 import { listResult, openBalanceFilter, summarizeInvoices, compareBalances } from "./finance.js";
 
-export const VERSION = "1.2.2";
+export const VERSION = "1.3.0";
 export function createMcpServer(gql = defaultGql) {
   const server = new McpServer({
     name: "xledger",
@@ -85,7 +86,11 @@ server.tool(
   "Inspect the actual Xledger schema for quantity, unit price and invoice links. This is preparation for invoice line readers, not a tool that returns invoice lines. Schema presence does not confirm token read permissions or EHF/PDF availability.",
   {},
   READ_ONLY,
-  async () => json(await inspectInvoiceLineCapabilities(gql))
+  async () => json({
+    ...await inspectInvoiceLineCapabilities(gql),
+    structuredRecordReadingImplemented: true,
+    recordSources: await inspectInvoiceRecordSources(gql),
+  })
 );
 
 server.tool(
@@ -94,6 +99,19 @@ server.tool(
   {},
   READ_ONLY,
   async () => json(await discoverInvoiceLineReadPaths(gql))
+);
+
+server.tool(
+  "get_invoice_line_records",
+  "Read one bounded page of structured electronic/vendor invoice details or sales invoice basis records, in the CURRENT entity only. Checks the actual schema and returns available financial fields with their original names and exact values. Default first=1 is suitable for a minimal read-permission test. These records have not been reconciled with original supplier product lines. Does not extract EHF/PDF, normalize units, or infer quantity/price from invoice totals. Check completeness and source kind before analysis.",
+  {
+    source: z.enum(INVOICE_RECORD_SOURCES).describe("Verified query source: eInvoiceDetails or vendorInvoiceDetails for supplier-source investigation; invoiceBaseItems is sales invoice basis, not supplier purchases"),
+    first: z.number().int().min(1).max(50).optional().default(1).describe("Maximum records in this page (1–50); begin with one record"),
+    after: z.string().min(1).max(2000).optional().describe("The nextCursor returned by the same source and filter; preceding pages are not included in this response"),
+    invoiceDbId: z.string().regex(/^[1-9]\d{0,18}$/).optional().describe("Optional parent ID from this source's own invoice/order header, not an AP transaction ID. Used only when the actual schema confirms the corresponding ID filter; otherwise the request fails without an unfiltered fallback"),
+  },
+  READ_ONLY,
+  async (options) => json(await readInvoiceLineRecords(gql, options))
 );
 
 // ─── Tool: get_ar_transactions ───────────────────────────────────────────────

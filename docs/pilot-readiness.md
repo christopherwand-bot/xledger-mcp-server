@@ -23,13 +23,25 @@ Live GL validation established that Xledger rejects a `Z` offset on the createdA
 
 ## Verify after deployment
 
-1. Confirm `/health` reports version `1.2.1` and unauthenticated `/mcp` remains rejected.
+1. Confirm `/health` reports the version being deployed (`1.3.0` for the structured-record reader) and unauthenticated `/mcp` remains rejected.
 2. Refresh the existing OAuth plugin's metadata, then start a new conversation.
 3. Call `get_connection_info`. Confirm the actual endpoint is the intended demo endpoint and confirm the correct current entity. Separately verify the API token's owner/data scope in Xledger.
 4. Repeat open AP/AR tests with positive and negative remaining balances. Check list completeness before presenting totals.
 5. Compare a selected month's GL account totals against an independent Xledger report. An internal comparison of two MCP tools is not independent reconciliation.
 6. Run the invoice-line capability lookup. Preserve the returned field names/types as the basis for implementing a line reader; do not guess a root connection or filter.
 7. Confirm user authorization, denied-user behavior and token renewal end to end before enabling production company data. Local OAuth/HTTP tests do not substitute for these production checks.
+
+## Invoice source discovery and record reader
+
+The authenticated demo-schema discovery on 24 October 2026 inspected 305 query fields. It confirmed `eInvoiceDetails → EInvoiceDetail`, `vendorInvoiceDetails → VendorInvoiceDetail`, and `invoiceBaseItems → InvoiceBaseItem`. It also found electronic and vendor invoice header connections. This proves the API paths exist, not that the token can read their records or that a detail is an original supplier product line.
+
+Version 1.3.0 adds `get_invoice_line_records` for those three detail connections. The reader checks query shape and fields against the active schema before requesting records. It returns only supported financial fields and shallow product/unit/currency/header identities. Named employee relations and unrelated document lists are excluded. Exact source values, nulls, credit quantities and price-basis fields are preserved; normalization and reconciliation remain unverified.
+
+The default is one record, with a maximum of 50 per page. Every data query explicitly uses `ownerSet: CURRENT`. A parent ID filter is used only when its exact name and scalar type are confirmed by introspection. No unfiltered retry, alternate-source fallback, document download or mutation is performed. Missing fields, nulls, empty results and permission failures are not replaced with zeros.
+
+After deployment, use the existing `get_invoice_line_capabilities` tool to inspect the supplier detail field names and filter types. Reload the tools to expose `get_invoice_line_records`, then request one record from each supplier detail source. Preserve any exact permission error for a narrow administrator request. Compare a known invoice/header linkage and its product lines against an original EHF/PDF before calculating purchase quantities or unit costs. The automated fixtures are synthetic and do not replace that live validation.
+
+The release also corrects three dependency-version labels in the lockfile that an earlier release-wide version replacement changed. Their resolved tarball URLs and integrity hashes stay unchanged; this is not a dependency upgrade.
 
 ## Read access still needed in Xledger
 
@@ -51,7 +63,7 @@ Any replacement token is to be delivered through an agreed secure channel and co
 
 ## Invoice line implementation acceptance criteria
 
-The line reader remains a next-stage task until the real schema, access permissions and document sources are verified. It must return company/invoice identity, line identity and source, description, quantity, unit, unit price, price basis, discount, currency, net line amount and VAT where present. Missing fields must be marked as missing, not invented or replaced with zero.
+The structured-record reader is implemented, but original supplier product-line access and meaning remain unverified until the real detail fields, permissions and document relationships are checked. A verified product-line reader must return company/invoice identity, line identity and source, description, quantity, unit, unit price, price basis, discount, currency, net line amount and VAT where present. Missing fields must be marked as missing, not invented or replaced with zero.
 
 Validate at least a structured incoming EHF invoice, a PDF-only invoice, a credit note and a discount/price-basis example against the originals. Check line sums, taxes and header totals. Normalize price units explicitly before comparing costs per kilogram. Do not divide a mixed invoice total by a guessed quantity.
 
