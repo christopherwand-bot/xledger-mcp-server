@@ -8,10 +8,23 @@ export function validateDate(
   value: string | undefined,
   name: string
 ): void {
-  if (value && !DATE_RE.test(value)) {
+  if (value === undefined) return;
+  if (!DATE_RE.test(value)) {
     throw new Error(
       `Invalid date format for ${name}: expected YYYY-MM-DD, got "${value}"`
     );
+  }
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
+    throw new Error(`Invalid calendar date for ${name}: "${value}"`);
+  }
+}
+
+export function validateDateRange(fromDate?: string, toDate?: string): void {
+  validateDate(fromDate, "fromDate");
+  validateDate(toDate, "toDate");
+  if (fromDate && toDate && fromDate > toDate) {
+    throw new Error("fromDate must be on or before toDate");
   }
 }
 
@@ -36,6 +49,7 @@ export function monthChunks(
   fromDate: string,
   toDate: string
 ): Array<{ start: string; end: string }> {
+  validateDateRange(fromDate, toDate);
   const out: Array<{ start: string; end: string }> = [];
   const end = parseUtc(toDate);
   let cur = parseUtc(fromDate);
@@ -50,6 +64,7 @@ export function monthChunks(
 
 /** Number of calendar months touched by an inclusive YYYY-MM-DD range. */
 export function monthSpan(fromDate: string, toDate: string): number {
+  validateDateRange(fromDate, toDate);
   const [fy, fm] = fromDate.split("-").map(Number);
   const [ty, tm] = toDate.split("-").map(Number);
   return (ty - fy) * 12 + (tm - fm) + 1;

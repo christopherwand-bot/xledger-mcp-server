@@ -48,7 +48,8 @@ describe("paginateAll", () => {
   });
 
   it("respects maxPages and flags the result as truncated", async () => {
-    const run = vi.fn().mockResolvedValue(page([1], true));
+    let cursor = 0;
+    const run = vi.fn(async () => page([++cursor], true));
     const nodes = await paginateAll(run, (a) => a, (d) => d.things, { maxPages: 3 });
     expect(run).toHaveBeenCalledTimes(3);
     expect(nodes).toHaveLength(3);
@@ -71,6 +72,20 @@ describe("paginateAll", () => {
     const nodes = await paginateAll(run, (a) => a, (d) => d.things);
     expect(run).toHaveBeenCalledTimes(1);
     expect(nodes.truncated).toBe(true);
+  });
+
+  it("does not claim completeness for an empty page that still advertises more rows", async () => {
+    const run = vi.fn().mockResolvedValue({ things: { edges: [], pageInfo: { hasNextPage: true } } });
+    const result = await paginateAll(run, a => a, d => d.things);
+    expect(result.truncated).toBe(true);
+  });
+
+  it("stops a repeated cursor rather than looping indefinitely", async () => {
+    const run = vi.fn().mockResolvedValue(page([1], true));
+    const result = await paginateAll(run, a => a, d => d.things);
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(result.truncated).toBe(true);
+    expect(result).toHaveLength(1);
   });
 
   it("truncationWarning names the source", () => {
