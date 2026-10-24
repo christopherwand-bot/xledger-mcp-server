@@ -37,6 +37,12 @@ In 1.3.1, the default query selects only scalar financial fields, including the 
 
 This raw record reader remains separate from original-document analysis. Detail rows without a verified invoice link are never joined by adjacency, similar amounts or guessed IDs. Use the new original-document tools below for item prices.
 
+## Posted accounting periods (1.5.0)
+
+`get_posted_transactions` reads booked GL detail from Xledger's `transactions` source using the row's own accounting period. `reconcile_posted_period` compares those amounts with period account balances and AP control accounts using exact four-decimal arithmetic. Both verify CURRENT entity and explicit row/header ownership. The older `get_journal_entries` reads a separate journal view and cannot establish complete booked-period coverage.
+
+AP results now include source transaction types and exact supplier, header, period and matching IDs. Payments, payroll, credits and unknown types remain distinguishable even when they carry invoice numbers. Output lists support `offset`/`nextOffset`; empty, incomplete and missing-source checks cannot pass as verified zero. Free text is opt-in, limited to operating accounts and guarded without requiring Project access. See [posted accounting](docs/posted-accounting.md) for inputs, coverage and interpretation.
+
 ## Original invoices and item prices (1.4.0)
 
 `get_invoice_documents` locates the original file on an exact AP or vendor record in the current entity. It checks both `invoiceFile` and `transactionHeader.invoiceFile`: live demo reads confirmed that the latter can hold the file when the AP field is null. `read_invoice_document` downloads the signed Xledger link and reads PDF or UBL/EHF Invoice/CreditNote content. It checks the document number, date when available, and currency against the accounting record. `includeFile` can return the original as an embedded MCP resource, subject to the 8 MiB response limit. Large text output has an explicit continuation offset.
@@ -68,10 +74,12 @@ Limits are explicit: 30 MiB per original file, 100 PDF pages and a processing-ti
 | `resume_invoice_scan` | Continue checkpointed work and retry missing/failed documents |
 | `get_item_price_history` | Provenance-backed net item prices, pack normalization and price changes |
 | `get_ar_transactions` | Customer invoices (Accounts Receivable): filter by date, outstanding only |
-| `get_ap_transactions` | Supplier invoices (Accounts Payable): filter by date, outstanding only |
+| `get_ap_transactions` | CURRENT AP rows with transaction types and exact supplier/header/match IDs; date/period filters and output continuation |
+| `get_posted_transactions` | CURRENT booked GL rows by their own accounting period, with exact voucher/account references |
+| `reconcile_posted_period` | Internal GL-to-period-balance and AP-to-GL controls in exact decimal arithmetic |
 | `get_account_balances` | GL account balances by fiscal year and period (cursor-paginated) |
 | `get_budget_vs_actual` | Budget vs actual per account with variance, for a year or a single period |
-| `get_journal_entries` | Raw GL transactions; project/free-text fields are optional and require appropriate access |
+| `get_journal_entries` | Separate journal view, not complete booked-period coverage; creation-date filters |
 | `get_projects` | Project financials: revenue, cost, hours, billability |
 | `get_timesheets` | Timesheet entries: hours per employee per project, cost and revenue rates |
 | `get_consultant_profitability` | Utilization, cost, revenue and margin per consultant and project |
@@ -274,6 +282,8 @@ The deploying organisation must assess these in its DPIA, or restrict access to 
 ## Tool notes
 
 - **`get_account_balances` / `get_budget_vs_actual`:** Xledger v2 has no year filter on balances and no `offset`, so the server pages through balances newest-first with cursors and filters client-side. `periodNumber` returns that single period only; omit it for all periods of the year.
+- **`get_posted_transactions` / `reconcile_posted_period`:** choose fiscal year and period number. The optional `periodId` is verified against both; `get_account_balances` also returns period IDs for reuse. Row `periodId` is authoritative for selection; the header's date/year/period may differ because a voucher can distribute costs to multiple periods. These tools never fall back to creation dates or `journalEntries` after a permission error.
+- **`get_ap_transactions`:** this source includes settlement, payroll and tax records. `transactionKind` is based on the source `slTransactionType`, never inferred from invoice number or amount. Date filters use invoice date; optional year/period filters use the AP row's `periodDbId`. Both filters intersect when supplied together. An exact `headerDbId` filter can retrieve an older original invoice linked to a periodised GL cost. Text is omitted by default in 1.5.0.
 - **Paginated tools** read at most 20 pages of 500 rows. Financial list outputs report `sourceComplete`, `complete`, `hasMore` and a warning when a source/page/output limit prevents completeness. Repeated or missing cursors are treated as incomplete. Invoice summaries report `complete` and a warning for incomplete sources.
 - **`get_invoice_line_records`** reads one page of at most 50 records, not 20 pages. Use `nextCursor` as `after` with the same source and parent filter. A continuation page is never labelled a complete source, even when it is the final page. Missing upstream pagination information is incomplete. Optional `invoiceDbId` means the source's own parent invoice/order header ID, not an AP transaction ID: vendor details use the confirmed `headerDbId` filter; electronic-invoice details expose no direct parent ID filter and reject this option. No unfiltered fallback is performed. Reference objects are opt-in; missing unit/header objects do not mean their values are zero or verified. Permission errors are propagated without trying another source.
 - **`get_revenue_summary`** aggregates numbered AR transactions in exact decimal arithmetic. Numbered payment/correction rows cannot be excluded reliably without confirmed transaction-type mapping, so the result explicitly does not certify invoice totals. There is no combined monetary total across currencies. For accrual-based figures, use GL balances.
