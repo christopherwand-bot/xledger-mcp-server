@@ -16,4 +16,17 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils tesseract-ocr tesseract-ocr-eng tesseract-ocr-nor
       - run: npm test
+      - name: Build production PDF and OCR runtime
+        run: docker build -t xledger-mcp-invoice-ci .
+      - name: Verify OCR in production image
+        run: |
+          docker run --rm --entrypoint node -v "$PWD/tests/fixtures:/fixtures:ro" xledger-mcp-invoice-ci --input-type=module -e '
+            import { readFile } from "node:fs/promises";
+            import { readPdf } from "./dist/pdf-reader.js";
+            const fixture = await readFile("/fixtures/scanned-invoice.pdf.base64", "utf8");
+            const invoice = await readPdf(Buffer.from(fixture.trim(), "base64"), "NOK");
+            if (invoice.pagesRead !== 1 || !invoice.text.toUpperCase().includes("SCANNED INVOICE") || invoice.status !== "needs_review") throw new Error("Native invoice OCR runtime failed");
+            console.log("Production PDF/OCR runtime passed");
+          '

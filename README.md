@@ -6,7 +6,7 @@ Use it with Claude, VS Code Copilot, or any MCP-compatible AI assistant to query
 
 ## Features
 
-- 17 read-only financial and diagnostic tools enabled by default; 6 personnel/employee-expense tools require explicit opt-in
+- 23 read-only financial, invoice-document and diagnostic tools enabled by default; 6 personnel/employee-expense tools require explicit opt-in
 - Compatible with Xledger GraphQL API v2 (cursor pagination, v2 filter syntax)
 - OAuth 2.1 protection for remote ChatGPT connections; legacy bearer protection for non-web clients
 - GDPR Art. 9 guard on absence project and time-type names in `get_absences`, `get_timesheets`, `get_consultant_profitability`, `get_expenses` and `get_journal_entries`: no per-person health absence by default. Some fields are not covered; see [Not covered](#not-covered)
@@ -35,7 +35,23 @@ Financial list payloads now contain `items`, `returned`, `matchedFetched`, `sour
 
 In 1.3.1, the default query selects only scalar financial fields, including the actual electronic-invoice names `externalProduct`, `externalProductNumber`, `unitPriceAmount`, `unitPriceFactor`, `discountPct` and `taxPct`. Unit, currency and header reference objects require explicit `includeReferences: true`; these may need extra read permissions. The Product master is never selected. This corrects a live pilot failure where an optional Product lookup prevented reading the invoice detail itself. Existing calls with only `source` and `first` use the corrected default without a tool-metadata reload; reload is needed to expose the new optional parameter.
 
-This is a record reader, not a certified supplier price analysis: the detail fields and token's record permissions still require live validation, and the records have not been reconciled with original supplier invoices. No EHF/PDF extraction, unit conversion or inferred price per kilogram is implemented. The existing capability tool now also reports the actual fields and filters of these three sources.
+This raw record reader remains separate from original-document analysis. Detail rows without a verified invoice link are never joined by adjacency, similar amounts or guessed IDs. Use the new original-document tools below for item prices.
+
+## Original invoices and item prices (1.4.0)
+
+`get_invoice_documents` locates the original file on an exact AP or vendor record in the current entity. It checks both `invoiceFile` and `transactionHeader.invoiceFile`: live demo reads confirmed that the latter can hold the file when the AP field is null. `read_invoice_document` downloads the signed Xledger link and reads PDF or UBL/EHF Invoice/CreditNote content. It checks the document number, date when available, and currency against the accounting record. `includeFile` can return the original as an embedded MCP resource, subject to the 8 MiB response limit. Large text output has an explicit continuation offset.
+
+For a whole period, call `start_invoice_scan` with `fromDate`, `toDate` and optionally `supplierId` or `supplierName`. A background worker enumerates **every page** of AP records and, by default, vendor/unposted records, then attempts to download/read every selected numbered record. It checkpoints each result. Poll `get_invoice_scan`, page its per-invoice status list with `nextOffset`, and use `resume_invoice_scan` after interruptions or to retry failures. Workers are shared across HTTP/MCP sessions in the same process. Run one application replica for this file-based worker.
+
+Every invoice remains visible as `read`, `needs_review`, `missing_document` or `failed`; unnumbered payment/settlement rows are separate. Source permissions, repeated pages/cursors and malformed responses prevent complete coverage. `coverage.allInvoicesRead`/`sourceComplete` only become true when all selected sources are enumerated and every numbered record is fully read. This describes records visible to the token, not independently verified access to every company invoice. A failed document is never a zero purchase.
+
+`get_item_price_history` uses reconciled original lines and returns invoice number, document ID, SHA-256, source path and PDF page or EHF line ID. Decimal arithmetic respects price base quantity and line allowances/charges. UBL line amounts and totals are reconciled; PDF tables need an explicit delivered quantity/unit/net-price/net-amount layout and a matching line net total. The positioned reader supports the tested Villa Import layout, including wrapped descriptions and separate ordered/delivered quantities. Unknown layouts retain text for review instead of invented prices. Local Tesseract OCR reads scanned pages; OCR amounts always require review and are excluded from automatic price comparisons.
+
+Prices are grouped by supplier, SKU (or exact normalized item text), currency, unit and pack size. Explicit mass/volume units and a single unambiguous pack weight permit kg/litre prices; ambiguous multipacks remain in their original unit. Credits, unreconciled invoices and duplicate copies of the same original are excluded. Document-level freight/discounts are disclosed and are not allocated to products. Comparisons remain provisional while invoice coverage is incomplete.
+
+The file downloader accepts only HTTPS URLs returned by scoped Xledger records, with exact trusted origins, public DNS addresses pinned for the connection, bounded redirects/time/size and no forwarded API/OAuth credentials. It never fetches links mentioned inside invoice text. Signed links and full document text are excluded from scan checkpoints. No external AI/OCR service or invoice database is required.
+
+Limits are explicit: 30 MiB per original file, 100 PDF pages and a processing-time budget per read. Over-limit or unreadable pages cause review/failure, not complete coverage. PDF/EHF support does not prove that Xledger exposes a particular original EHF or that a demo file exists: a live demo attachment link returned HTTP 404 during validation. File access must be checked with the actual token/environment.
 
 ## Tools
 
@@ -45,6 +61,12 @@ This is a record reader, not a certified supplier price analysis: the detail fie
 | `get_invoice_line_capabilities` | Read-only schema discovery for invoice-line implementation; does not fetch invoice lines |
 | `discover_invoice_line_read_paths` | Read-only discovery of actual query roots, connections and node types |
 | `get_invoice_line_records` | One page of raw, schema-checked electronic/vendor invoice details or sales invoice basis; defaults to one record |
+| `get_invoice_documents` | Exact invoice's original files, including the transaction-header attachment |
+| `read_invoice_document` | Original PDF/EHF, all supported page text, reconciled lines and per-document read status |
+| `start_invoice_scan` | Background enumeration and reading of every supplier invoice in a period |
+| `get_invoice_scan` | Complete coverage progress and a paged status ledger for every selected invoice |
+| `resume_invoice_scan` | Continue checkpointed work and retry missing/failed documents |
+| `get_item_price_history` | Provenance-backed net item prices, pack normalization and price changes |
 | `get_ar_transactions` | Customer invoices (Accounts Receivable): filter by date, outstanding only |
 | `get_ap_transactions` | Supplier invoices (Accounts Payable): filter by date, outstanding only |
 | `get_account_balances` | GL account balances by fiscal year and period (cursor-paginated) |
@@ -74,6 +96,7 @@ All tools are annotated with `readOnlyHint: true`. The server never sends GraphQ
 ### Prerequisites
 
 - Node.js 22+ (with Web Crypto and Fetch)
+- Poppler (`pdfinfo`, `pdftotext`, `pdftoppm`) and Tesseract with English/Norwegian language data for PDF/OCR; the Dockerfile installs these
 - An Xledger account with GraphQL API access
 - An API token (generate at: Xledger > Administration > System Access > GraphQL/API tokens)
 
@@ -92,6 +115,8 @@ npm run build
 |----------|----------|---------|-------------|
 | `XLEDGER_GRAPHQL_TOKEN` | Yes | — | Your Xledger API token |
 | `XLEDGER_API_URL` | No | `https://www.xledger.net/graphql` | API endpoint (use `https://demo.xledger.net/graphql` for testing) |
+| `XLEDGER_INVOICE_SCAN_DIR` | No | OS temporary directory | Private scan checkpoints; use a writable mounted volume directory if scans must survive deployments. Keep one application replica. |
+| `XLEDGER_DOCUMENT_ALLOWED_ORIGINS` | No | Xledger API origin only | Comma-separated exact trusted HTTPS origins, only if Xledger returns original files from external storage. Never arbitrary invoice-text URLs. |
 | `MCP_TRANSPORT` | No | `stdio` | Set to `http` when deploying a remote MCP endpoint for ChatGPT |
 | `MCP_AUTH_TOKEN` | HTTP only | — | Legacy bearer secret; disabled by default when OAuth is configured |
 | `MCP_ALLOW_LEGACY_BEARER` | No | unset | Set to `1` only for temporary static-token migration alongside OAuth |
