@@ -73,4 +73,13 @@ describe("document attribution and price history", () => {
     expect(result.warnings.join(" ")).toContain("disagree");
     expect(invoicePriceHistory([result]).groups).toHaveLength(0);
   });
+  it("keeps a downloaded original available for review even if its parser fails", async () => {
+    const original = Buffer.from("%PDF-synthetic-unsupported-layout");
+    const { result, blobs } = await readSourceInvoice(sourceInvoice(), "https://demo.xledger.net", {
+      download: async () => original, pdf: async () => { throw new Error("Unsupported PDF encoding"); },
+    });
+    expect(result.documents[0]).toMatchObject({ status: "parse_failed", mimeType: "application/pdf" });
+    expect(blobs.get("100")).toEqual(original);
+    expect(invoicePriceHistory([result]).groups).toHaveLength(0);
+  });
 });

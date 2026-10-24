@@ -138,7 +138,7 @@ server.tool("read_invoice_document",
       if (!bytes) continue;
       if (bytes.length > 8 * 1024 * 1024) { response.content.push({ type: "text", text: `Original document ${doc.documentId} exceeds the 8 MiB MCP embedded-file limit; text and line results are returned.` }); continue; }
       response.content.push({ type: "resource", resource: { uri: `xledger://invoices/${source}/${invoiceDbId}/documents/${doc.documentId}`,
-        mimeType: doc.parsed?.format === "ehf" ? "application/xml" : "application/pdf", blob: bytes.toString("base64") } });
+        mimeType: doc.mimeType || "application/octet-stream", blob: bytes.toString("base64") } });
     }
     return response;
   });

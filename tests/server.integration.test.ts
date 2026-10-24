@@ -3,13 +3,15 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createMcpServer } from "../src/server.js";
 import type { GqlRunner } from "../src/graphql.js";
-import { apiNode } from "./invoice-fixtures.js";
+import { apiNode, syntheticPdf } from "./invoice-fixtures.js";
+import * as invoiceDownload from "../src/invoice-download.js";
 
 const sessions: Array<{ close: () => Promise<void> }> = [];
 beforeEach(() => vi.stubEnv("XLEDGER_ENABLE_PERSONNEL_TOOLS", ""));
 afterEach(async () => {
   for (const session of sessions.splice(0)) await session.close();
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
 });
 
 function page(root: string, rows: any[], more = false) {
@@ -34,6 +36,19 @@ async function connect(run: GqlRunner) {
 }
 
 describe("financial pilot through the actual MCP protocol", () => {
+  it("returns the actual original PDF as an embedded resource through MCP", async () => {
+    vi.spyOn(invoiceDownload, "downloadInvoiceDocument").mockResolvedValue(syntheticPdf());
+    const run = vi.fn(async (query: string) => query.includes("entities(") ? page("entities", [{ dbId: 7 }]) : page("apTransactions", [apiNode(10, { invoiceNumber: "SYN-1" })]));
+    const { client } = await connect(run);
+    const result = await client.callTool({ name: "read_invoice_document", arguments: { invoiceDbId: "10", includeFile: true } });
+    expect(result.isError).not.toBe(true);
+    const content = result.content as any[];
+    expect(JSON.parse(content.find(c => c.type === "text").text).status).toBe("read");
+    const resource = content.find(c => c.type === "resource").resource;
+    expect(resource.mimeType).toBe("application/pdf");
+    expect(resource.uri).toBe("xledger://invoices/apTransactions/10/documents/110");
+    expect(Buffer.from(resource.blob, "base64")).toEqual(syntheticPdf());
+  });
   it("finds an exact invoice's transaction-header original through the MCP tool", async () => {
     const run = vi.fn(async (query: string) => query.includes("entities(") ? page("entities", [{ dbId: 7 }]) : page("apTransactions", [apiNode(10)]));
     const { client, call } = await connect(run);

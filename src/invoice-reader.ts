@@ -7,6 +7,7 @@ import { DOCUMENT_DATA_NOTICE, type ParsedInvoice } from "./invoice-model.js";
 
 export interface DocumentRead {
   documentId: string; fileName: string; sourcePath: string; sha256: string | null; bytes: number | null;
+  mimeType?: "application/pdf" | "application/xml";
   status: "read" | "needs_review" | "download_failed" | "unsupported_format" | "parse_failed" | "identity_mismatch";
   error?: string; parsed?: ParsedInvoice;
 }
@@ -41,8 +42,14 @@ export async function readSourceInvoice(invoice: SourceInvoice, apiOrigin: strin
     } catch (error) { doc.error = error instanceof Error ? error.message : "Document download failed"; continue; }
     const prefix = bytes.subarray(0, 1024).toString("utf8").replace(/^\uFEFF/, "").trimStart();
     try {
-      if (bytes.subarray(0, 1024).includes(Buffer.from("%PDF-"))) doc.parsed = await (dependencies.pdf ?? readPdf)(bytes, invoice.currency || undefined);
-      else if (prefix.startsWith("<?xml") || /^<(?:[\w.-]+:)?(?:Invoice|CreditNote)(?:\s|>)/.test(prefix)) doc.parsed = readEhf(bytes);
+      if (bytes.subarray(0, 1024).includes(Buffer.from("%PDF-"))) {
+        doc.mimeType = "application/pdf"; blobs.set(ref.dbId, bytes);
+        doc.parsed = await (dependencies.pdf ?? readPdf)(bytes, invoice.currency || undefined);
+      }
+      else if (prefix.startsWith("<?xml") || /^<(?:[\w.-]+:)?(?:Invoice|CreditNote)(?:\s|>)/.test(prefix)) {
+        doc.mimeType = "application/xml"; blobs.set(ref.dbId, bytes);
+        doc.parsed = readEhf(bytes);
+      }
       else { doc.status = "unsupported_format"; doc.error = "Xledger link did not return a PDF or UBL/EHF invoice (a sign-in page is not a document)"; continue; }
       const parsed = doc.parsed;
       if (parsed.invoiceNumber !== invoice.invoiceNumber || (parsed.invoiceDate && invoice.invoiceDate && parsed.invoiceDate !== invoice.invoiceDate) ||
@@ -50,7 +57,6 @@ export async function readSourceInvoice(invoice: SourceInvoice, apiOrigin: strin
         doc.status = "identity_mismatch"; doc.error = "Document invoice number, date or currency could not be matched exactly to the Xledger invoice"; continue;
       }
       doc.status = parsed.status;
-      blobs.set(ref.dbId, bytes);
     } catch (error) { doc.status = "parse_failed"; doc.error = error instanceof Error ? error.message : "Document could not be parsed"; }
   }
   const usable = result.documents.filter(d => d.status === "read" || d.status === "needs_review");
