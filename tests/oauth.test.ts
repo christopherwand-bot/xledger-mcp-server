@@ -5,6 +5,7 @@ import {
   createOAuthAuthorizer,
   matchesStaticBearerToken,
   readOAuthConfig,
+  legacyBearerAllowed,
 } from "../src/oauth.js";
 
 const environment = {
@@ -143,6 +144,11 @@ describe("signed OAuth access tokens", () => {
 });
 
 describe("bearer parsing", () => {
+  it("disables static-token fallback with OAuth unless explicitly allowed", () => {
+    expect(legacyBearerAllowed(true, {})).toBe(false);
+    expect(legacyBearerAllowed(true, { MCP_ALLOW_LEGACY_BEARER: "1" })).toBe(true);
+    expect(legacyBearerAllowed(false, {})).toBe(true);
+  });
   it("accepts only an exact static bearer token", () => {
     expect(bearerToken("Bearer correct-token")).toBe("correct-token");
     expect(bearerToken("Basic correct-token")).toBeUndefined();

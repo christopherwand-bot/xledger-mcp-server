@@ -6,28 +6,46 @@ Use it with Claude, VS Code Copilot, or any MCP-compatible AI assistant to query
 
 ## Features
 
-- 19 read-only tools covering accounting, project, invoicing and HR data
+- 15 read-only financial and diagnostic tools enabled by default; 6 personnel/employee-expense tools require explicit opt-in
 - Compatible with Xledger GraphQL API v2 (cursor pagination, v2 filter syntax)
 - OAuth 2.1 protection for remote ChatGPT connections; legacy bearer protection for non-web clients
 - GDPR Art. 9 guard on absence project and time-type names in `get_absences`, `get_timesheets`, `get_consultant_profitability`, `get_expenses` and `get_journal_entries`: no per-person health absence by default. Some fields are not covered; see [Not covered](#not-covered)
 - MCP SDK and `jose` for OAuth token verification
 - TypeScript with full type safety
 
+## Financial pilot changes (1.2.0)
+
+This release implements the demo-test findings. See [pilot readiness and access request](docs/pilot-readiness.md) for the rollout sequence and remaining external work.
+
+- Open AR/AP filters include nonzero balances of either sign, including credit balances.
+- Financial row selections return explicit completeness/limit metadata. A short or capped list is not a verified total.
+- The legacy-named `get_revenue_summary` is now an AR transaction overview. It excludes unnumbered rows, separates currencies and no longer labels transaction sums as invoiced revenue. `invoiceClassificationVerified` remains false until transaction type is verified. Use GL balances for accounting revenue.
+- Missing budget rows produce `budget: null` and `variance: null`; a recorded zero budget remains zero.
+- Dates must exist in the calendar; reversed intervals, invalid periods and invalid limits are rejected.
+- GL year filtering happens before the output limit. Project and free-text fields are omitted by default; `includeProject=true` requires Project read access.
+- Cash-book errors never cause a switch from row-creation date to bank date.
+- Personnel/employee-expense tools are off by default. Static bearer fallback is off when OAuth is configured unless explicitly enabled for migration.
+- Read requests have per-attempt deadlines and at most one retry for transient upstream/network failures.
+
+Financial list payloads now contain `items`, `returned`, `matchedFetched`, `sourceComplete`, `complete`, and `hasMore`. Budget output keeps `rows`; customer lookup keeps `customers`. Consumers must check completeness before calculating totals.
+
 ## Tools
 
 | Tool | Description |
 |------|-------------|
+| `get_connection_info` | Configured endpoint, environment, current entity and pilot restrictions; no secrets |
+| `get_invoice_line_capabilities` | Read-only schema discovery for invoice-line implementation; does not fetch invoice lines |
 | `get_ar_transactions` | Customer invoices (Accounts Receivable): filter by date, outstanding only |
 | `get_ap_transactions` | Supplier invoices (Accounts Payable): filter by date, outstanding only |
 | `get_account_balances` | GL account balances by fiscal year and period (cursor-paginated) |
 | `get_budget_vs_actual` | Budget vs actual per account with variance, for a year or a single period |
-| `get_journal_entries` | Raw GL transactions with account, amount, project |
+| `get_journal_entries` | Raw GL transactions; project/free-text fields are optional and require appropriate access |
 | `get_projects` | Project financials: revenue, cost, hours, billability |
 | `get_timesheets` | Timesheet entries: hours per employee per project, cost and revenue rates |
 | `get_consultant_profitability` | Utilization, cost, revenue and margin per consultant and project |
 | `get_employees` | Employee list with employment dates |
 | `get_customers` | Customer lookup; search covers all customers, not only the first page |
-| `get_revenue_summary` | Invoiced and outstanding amounts by customer for a date period |
+| `get_revenue_summary` | Numbered AR transaction overview by customer and currency; not verified revenue or invoicing |
 | `get_invoice_proposals` | Not-yet-invoiced sales orders (invoice proposals) with order-level references |
 | `get_invoiced_orders` | Invoiced sales orders with order-level references (PO/contract) |
 | `get_expenses` | Expense lines (amount, type, project, approval) |
@@ -36,6 +54,8 @@ Use it with Claude, VS Code Copilot, or any MCP-compatible AI assistant to query
 | `get_exchange_rates` | Currency exchange rates, filtered server-side by currency pair |
 | `get_cash_transactions` | Cash book transactions (only if your organization uses the cash book module) |
 | `get_deltas` | Change records for the last 3 days, for incremental sync |
+
+The six tools `get_timesheets`, `get_consultant_profitability`, `get_employees`, `get_expenses`, `get_expense_reports`, and `get_absences` are hidden unless `XLEDGER_ENABLE_PERSONNEL_TOOLS=1`. Personnel deltas are also denied by default.
 
 All tools are annotated with `readOnlyHint: true`. The server never sends GraphQL mutations.
 
@@ -63,7 +83,9 @@ npm run build
 | `XLEDGER_GRAPHQL_TOKEN` | Yes | — | Your Xledger API token |
 | `XLEDGER_API_URL` | No | `https://www.xledger.net/graphql` | API endpoint (use `https://demo.xledger.net/graphql` for testing) |
 | `MCP_TRANSPORT` | No | `stdio` | Set to `http` when deploying a remote MCP endpoint for ChatGPT |
-| `MCP_AUTH_TOKEN` | HTTP only | — | Optional legacy bearer secret for non-web clients; use OAuth for ChatGPT web |
+| `MCP_AUTH_TOKEN` | HTTP only | — | Legacy bearer secret; disabled by default when OAuth is configured |
+| `MCP_ALLOW_LEGACY_BEARER` | No | unset | Set to `1` only for temporary static-token migration alongside OAuth |
+| `XLEDGER_ENABLE_PERSONNEL_TOOLS` | No | unset | Set to `1` to explicitly expose the six personnel/employee-expense tools |
 | `OAUTH_ISSUER` | ChatGPT web | — | HTTPS issuer URL from the OAuth provider (for example Auth0) |
 | `OAUTH_RESOURCE` | ChatGPT web | — | Canonical HTTPS identifier for this MCP server; must equal the OAuth API identifier |
 | `OAUTH_AUDIENCE` | No | `OAUTH_RESOURCE` | Expected `aud` claim in the OAuth access token |
@@ -106,7 +128,7 @@ OAUTH_ALLOWED_SUBJECTS=auth0|replace-with-your-pilot-user-id
 
 The server verifies the token signature, exact issuer and audience, expiration, granted `xledger:read` scope and permitted user ID on every MCP request. The Auth0 `permissions` claim is not a substitute for delegated scope. Sessions are bound to the authenticated user and OAuth client. It never handles user passwords or stores OAuth client secrets. This is one shared Xledger connection: all permitted users see the data allowed by its server-side Xledger token, not separate per-user Xledger accounts.
 
-After deployment, add `https://your-domain.example/mcp` as a custom MCP server in ChatGPT and complete the sign-in window. Do not enter `XLEDGER_GRAPHQL_TOKEN` or `MCP_AUTH_TOKEN` in ChatGPT. `MCP_AUTH_TOKEN` may remain configured as a separate fallback for local or non-web clients during the OAuth migration, but it bypasses OAuth user restrictions; remove it after migration if no legacy client needs it. Never enable real company data until the authorized-user and denied-user tests both pass end to end.
+After deployment, add `https://your-domain.example/mcp` as a custom MCP server in ChatGPT and complete the sign-in window. Do not enter `XLEDGER_GRAPHQL_TOKEN` or `MCP_AUTH_TOKEN` in ChatGPT. `MCP_AUTH_TOKEN` is ignored when OAuth is configured unless `MCP_ALLOW_LEGACY_BEARER=1`. This explicit migration fallback bypasses OAuth user restrictions; keep it disabled in normal use. Never enable real company data until the authorized-user and denied-user tests both pass end to end.
 
 ## Configuration
 
@@ -217,14 +239,14 @@ The deploying organisation must assess these in its DPIA, or restrict access to 
 ## Tool notes
 
 - **`get_account_balances` / `get_budget_vs_actual`:** Xledger v2 has no year filter on balances and no `offset`, so the server pages through balances newest-first with cursors and filters client-side. `periodNumber` returns that single period only; omit it for all periods of the year.
-- **Paginated tools** (`get_account_balances`, `get_budget_vs_actual`, `get_customers`, `get_invoice_proposals`, `get_invoiced_orders`) read at most 20 pages of 500 rows. If more rows exist, the response includes a `warning` and `truncated: true` instead of silently returning a partial result.
-- **`get_revenue_summary`** is based on AR invoices, so credit notes and invoice timing affect it. For accrual-based monthly figures, use `get_budget_vs_actual`.
+- **Paginated tools** read at most 20 pages of 500 rows. Financial list outputs report `sourceComplete`, `complete`, `hasMore` and a warning when a source/page/output limit prevents completeness. Repeated or missing cursors are treated as incomplete. Invoice summaries report `complete` and a warning for incomplete sources.
+- **`get_revenue_summary`** aggregates numbered AR transactions in exact decimal arithmetic. Numbered payment/correction rows cannot be excluded reliably without confirmed transaction-type mapping, so the result explicitly does not certify invoice totals. There is no combined monetary total across currencies. For accrual-based figures, use GL balances.
 - **`get_customers`** reads all customers (cursor-paginated) before applying `search`, so a match is never missed because it was outside the first page.
 - **`get_invoice_proposals` / `get_invoiced_orders`** read the `salesOrders` connection (the order-level invoice overview). `invoiceNumber` `0` means not yet invoiced. `invoiceAmount` is net excluding VAT; `taxAmount` is the VAT. Reference fields (`yourReference`, `contract`) are compared at order level.
 - **`get_consultant_profitability`** takes `monthlySalary` and `hourlyRate` as inputs, because payroll data is usually outside the API token's scope. `agAvgPct` (employer social security contribution) defaults to the Swedish standard rate of 31.42 %.
 - **`get_consultant_profitability` / `get_absences`** fetch timesheets in monthly chunks of up to 500 rows. If a month reaches that limit, the response includes a `warning` and `truncatedMonths` instead of silently undercounting.
 - **`get_expenses` / `get_expense_reports`:** if the API token's Expense owner-scope is `MINE`, it only sees the integration user's own expenses. An Xledger administrator can widen the scope.
-- **`get_cash_transactions`:** `fromDate`/`toDate` filter on `createdAt`, not on the bank date (`postedBankDate` is not filterable). An empty result explains this instead of returning a bare `[]`.
+- **`get_cash_transactions`:** `fromDate`/`toDate` always filter on `createdAt`, not bank date. An empty result explains this; permission/filter failures are propagated, never retried using a different date basis.
 - **Empty results:** Xledger returns `edges: null` (not `[]`) when nothing matches. All tools handle this and return an empty list or an explanatory note.
 
 ## Xledger API v2 Notes

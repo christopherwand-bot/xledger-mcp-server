@@ -49,18 +49,23 @@ export async function paginateAll(
   const nodes: Node[] = [];
   let truncated = false;
   let after: string | null = null;
+  const cursors = new Set<string>();
   for (let page = 0; page < maxPages; page++) {
-    const data = await run(buildQuery(after ? `, after: "${after}"` : ""));
+    const data = await run(buildQuery(after ? `, after: ${JSON.stringify(after)}` : ""));
     const conn = pick(data);
     const edges = conn?.edges ?? [];
+    const lastCursor = edges[edges.length - 1]?.cursor;
+    if (lastCursor && cursors.has(lastCursor)) { truncated = true; break; }
     for (const e of edges) nodes.push(e.node);
-    if (!conn?.pageInfo?.hasNextPage || edges.length === 0) break;
+    if (!conn?.pageInfo?.hasNextPage) break;
+    if (edges.length === 0) { truncated = true; break; }
     if (stopWhen && stopWhen(edges.map((e) => e.node))) break;
-    after = edges[edges.length - 1].cursor ?? null;
-    if (!after || page === maxPages - 1) {
+    after = lastCursor ?? null;
+    if (!after || cursors.has(after) || page === maxPages - 1) {
       truncated = true;
       break;
     }
+    cursors.add(after);
   }
   // Non-enumerable, so the result still behaves (and serializes) as a plain array.
   return Object.defineProperty(nodes, "truncated", { value: truncated, enumerable: false }) as PagedNodes;

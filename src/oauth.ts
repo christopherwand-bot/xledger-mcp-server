@@ -12,6 +12,10 @@ export type OAuthConfig = {
 
 export type OAuthIdentity = { issuer: string; subject: string; clientId: string };
 
+export function legacyBearerAllowed(oauthConfigured: boolean, env: NodeJS.ProcessEnv = process.env): boolean {
+  return !oauthConfigured || env.MCP_ALLOW_LEGACY_BEARER === "1";
+}
+
 export type OAuthAuthorizer = {
   config: OAuthConfig;
   metadataUrl: string;

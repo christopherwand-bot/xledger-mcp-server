@@ -34,6 +34,7 @@ describe("gql helper", () => {
           Authorization: "token test-token-123",
         },
         body: JSON.stringify({ query }),
+        signal: expect.any(AbortSignal),
       }
     );
   });
