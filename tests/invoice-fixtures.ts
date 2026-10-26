@@ -2,10 +2,11 @@ import type { SourceInvoice } from "../src/invoice-source.js";
 
 // Entirely synthetic invoices. No company records or signed URLs in fixtures.
 export function ehf(options: { number?: string; quantity?: string; unit?: string; price?: string; base?: string;
-  baseUnit?: string; net?: string; allowance?: string; charge?: string; currency?: string;
+  baseUnit?: string | null; net?: string; allowance?: string; charge?: string; currency?: string;
   description?: string; credit?: boolean; extra?: string; date?: string } = {}) {
   const o = { number: "SYN-1", quantity: "2", unit: "C62", price: "300", base: "1", net: "600", currency: "NOK", description: "Test flour 25 kg", ...options };
   const root = o.credit ? "CreditNote" : "Invoice", line = o.credit ? "CreditNoteLine" : "InvoiceLine", qty = o.credit ? "CreditedQuantity" : "InvoicedQuantity";
+  const baseUnitAttribute = o.baseUnit === null ? "" : ` unitCode="${o.baseUnit ?? o.unit}"`;
   return Buffer.from(`<?xml version="1.0" encoding="UTF-8"?><${root} xmlns="urn:oasis:names:specification:ubl:schema:xsd:${root}-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2" xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2">
   <cbc:ID>${o.number}</cbc:ID><cbc:IssueDate>${o.date || "2026-01-01"}</cbc:IssueDate><cbc:DocumentCurrencyCode>${o.currency}</cbc:DocumentCurrencyCode>
   <cac:AccountingSupplierParty><cac:Party><cac:PartyName><cbc:Name>Synthetic supplier</cbc:Name></cac:PartyName><cac:PartyLegalEntity><cbc:CompanyID>999999999</cbc:CompanyID></cac:PartyLegalEntity></cac:Party></cac:AccountingSupplierParty>
@@ -15,7 +16,7 @@ export function ehf(options: { number?: string; quantity?: string; unit?: string
   ${o.allowance ? `<cac:AllowanceCharge><cbc:ChargeIndicator>false</cbc:ChargeIndicator><cbc:Amount currencyID="${o.currency}">${o.allowance}</cbc:Amount></cac:AllowanceCharge>` : ""}
   ${o.charge ? `<cac:AllowanceCharge><cbc:ChargeIndicator>true</cbc:ChargeIndicator><cbc:Amount currencyID="${o.currency}">${o.charge}</cbc:Amount></cac:AllowanceCharge>` : ""}
   <cac:Item><cbc:Name>${o.description}</cbc:Name><cac:SellersItemIdentification><cbc:ID>00012</cbc:ID></cac:SellersItemIdentification></cac:Item>
-  <cac:Price><cbc:PriceAmount currencyID="${o.currency}">${o.price}</cbc:PriceAmount><cbc:BaseQuantity unitCode="${o.baseUnit ?? o.unit}">${o.base}</cbc:BaseQuantity></cac:Price></cac:${line}>${o.extra || ""}</${root}>`);
+  <cac:Price><cbc:PriceAmount currencyID="${o.currency}">${o.price}</cbc:PriceAmount><cbc:BaseQuantity${baseUnitAttribute}>${o.base}</cbc:BaseQuantity></cac:Price></cac:${line}>${o.extra || ""}</${root}>`);
 }
 export function sourceInvoice(options: Partial<SourceInvoice> = {}): SourceInvoice {
   return { source: "apTransactions", dbId: "10", ownerDbId: 7, invoiceNumber: "SYN-1", invoiceDate: "2026-01-01",

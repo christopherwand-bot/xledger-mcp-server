@@ -51,7 +51,9 @@ export function readEhf(bytes: Buffer): ParsedInvoice {
       const price = decimal(txt(p.PriceAmount), "item net price");
       const base = decimal(p.BaseQuantity == null ? "1" : txt(p.BaseQuantity), "price base quantity");
       if (price.isNegative() || !base.isPositive()) throw new Error("Price must be nonnegative and price base must be positive");
-      if (p.BaseQuantity != null && txt(p.BaseQuantity?.["@_unitCode"]) !== unit) throw new Error("Price base and invoiced quantity use different units");
+      // BaseQuantity/@unitCode is optional; R130 compares units only when supplied.
+      const baseUnit = p.BaseQuantity?.["@_unitCode"];
+      if (baseUnit !== undefined && txt(baseUnit) !== unit) throw new Error("Price base and invoiced quantity use different units");
       const amounts = [row.LineExtensionAmount, p.PriceAmount, ...list(row.AllowanceCharge).map(a => a.Amount)];
       if (amounts.some(a => a?.["@_currencyID"] !== currency)) throw new Error("Missing or inconsistent line currency");
       const net = decimal(txt(row.LineExtensionAmount), "line net amount");
