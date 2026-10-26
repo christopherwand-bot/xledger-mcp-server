@@ -21,6 +21,15 @@ describe("document attribution and price history", () => {
     const g = invoicePriceHistory([a, b]).groups[0];
     expect(g).toMatchObject({ minUnitPriceExVat: "12", maxUnitPriceExVat: "13.2", changePercent: "10", changeExVat: "1.2", weightedUnitPriceExVat: "12.6" });
   });
+  it("uses an EHF with an omitted price-base unit in verified product price history", async () => {
+    const { result } = await readSourceInvoice(sourceInvoice(), "https://demo.xledger.net/graphql", {
+      download: async () => ehf({ quantity: "2", price: "30", base: "0.1", baseUnit: null, net: "600" }),
+    });
+    expect(result.status).toBe("read");
+    const group = invoicePriceHistory([result]).groups[0];
+    expect(group).toMatchObject({ unit: "kg", pack: "25 kg/C62", weightedUnitPriceExVat: "12", observationCount: 1 });
+    expect(group.observations[0]).toMatchObject({ originalQuantity: "2", originalUnit: "C62", priceBaseQuantity: "0.1", unitPriceExVat: "12" });
+  });
   it("keeps other suppliers, currencies and pack sizes in separate groups", async () => {
     const first = (await read()).result;
     const other = structuredClone(first); other.invoice.supplierId = "9";

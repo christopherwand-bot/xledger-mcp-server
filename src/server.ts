@@ -30,7 +30,7 @@ import {
 
 import { listResult, openBalanceFilter, summarizeInvoices, compareBalances } from "./finance.js";
 
-export const VERSION = "1.5.0";
+export const VERSION = "1.5.1";
 export function createMcpServer(gql = defaultGql) {
   const server = new McpServer({
     name: "xledger",

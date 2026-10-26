@@ -12,6 +12,30 @@ describe("original EHF lines", () => {
     const p = readEhf(ehf({ quantity: "10", unit: "KGM", price: "200", base: "100", net: "18", allowance: "5", charge: "3" }));
     expect(p.status).toBe("read"); expect(p.lines[0]).toMatchObject({ netUnitPrice: "1.8", price: "200", allowances: "5", charges: "3" });
   });
+  it.each([false, true])("reads a fractional price base without its optional unit code (credit=%s)", credit => {
+    const p = readEhf(ehf({ credit, quantity: "3", unit: "C62", price: "12", base: "0.25", baseUnit: null, net: "144" }));
+    expect(p).toMatchObject({ status: "read", creditNote: credit, warnings: [], lineNetTotal: "144" });
+    expect(p.lines).toHaveLength(1);
+    expect(p.lines[0]).toMatchObject({ quantity: "3", unit: "C62", price: "12", priceBaseQuantity: "0.25", netAmount: "144", netUnitPrice: "48" });
+  });
+  it("reconciles discounts and charges when the price-base unit is omitted", () => {
+    const p = readEhf(ehf({ quantity: "10", unit: "KGM", price: "200", base: "100", baseUnit: null, net: "18", allowance: "5", charge: "3" }));
+    expect(p.status).toBe("read");
+    expect(p.lines[0]).toMatchObject({ unit: "KGM", priceBaseQuantity: "100", netUnitPrice: "1.8", allowances: "5", charges: "3" });
+  });
+  it.each([
+    { base: "0" }, { base: "-1" }, { base: "invalid" }, { net: "599" }, { quantity: "0", net: "0" },
+  ])("still rejects invalid quantities, bases and totals without a price-base unit %j", options => {
+    const p = readEhf(ehf({ ...options, baseUnit: null }));
+    expect(p.status).toBe("needs_review");
+    expect(p.lines).toHaveLength(0);
+  });
+  it.each(["", "KGM"])("rejects an explicitly empty or different price-base unit %j", baseUnit => {
+    const p = readEhf(ehf({ baseUnit }));
+    expect(p.status).toBe("needs_review");
+    expect(p.lines).toHaveLength(0);
+    expect(p.warnings.join(" ")).toContain("different units");
+  });
   it("does not subtract price-level discount a second time", () => {
     const b = ehf().toString().replace("</cac:Price>", '<cac:AllowanceCharge><cbc:ChargeIndicator>false</cbc:ChargeIndicator><cbc:Amount currencyID="NOK">20</cbc:Amount><cbc:BaseAmount currencyID="NOK">320</cbc:BaseAmount></cac:AllowanceCharge></cac:Price>');
     expect(readEhf(Buffer.from(b)).lines[0].netUnitPrice).toBe("300");
