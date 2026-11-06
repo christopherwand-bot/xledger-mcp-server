@@ -68,6 +68,9 @@ Original daily-report PDFs can be read from exact posted sales/cash vouchers, in
 | Tool | Description |
 |------|-------------|
 | `get_connection_info` | Configured endpoint, environment, current entity and pilot restrictions; no secrets |
+| `get_onlinepos_connection_info` | Selected restaurant's OnlinePOS configuration and optional location-ID probe; no tokens |
+| `get_onlinepos_revenue_journals` | Selected Firma-ID's source revenue and btypes observations, in windows up to 48 hours; cash totals remain unverified |
+| `get_onlinepos_end_of_day_journals` | Selected restaurant's original end-of-day journal lines, without clerk/card/debtor detail |
 | `get_invoice_line_capabilities` | Read-only schema discovery for invoice-line implementation; does not fetch invoice lines |
 | `discover_invoice_line_read_paths` | Read-only discovery of actual query roots, connections and node types |
 | `get_invoice_line_records` | One page of raw, schema-checked electronic/vendor invoice details or sales invoice basis; defaults to one record |
