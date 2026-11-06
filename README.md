@@ -6,7 +6,7 @@ Use it with Claude, VS Code Copilot, or any MCP-compatible AI assistant to query
 
 ## Features
 
-- 23 read-only financial, invoice-document and diagnostic tools enabled by default; 6 personnel/employee-expense tools require explicit opt-in
+- Read-only financial, invoice/settlement-document and diagnostic tools; 6 personnel/employee-expense tools require explicit opt-in
 - Compatible with Xledger GraphQL API v2 (cursor pagination, v2 filter syntax)
 - OAuth 2.1 protection for remote ChatGPT connections; legacy bearer protection for non-web clients
 - GDPR Art. 9 guard on absence project and time-type names in `get_absences`, `get_timesheets`, `get_consultant_profitability`, `get_expenses` and `get_journal_entries`: no per-person health absence by default. Some fields are not covered; see [Not covered](#not-covered)
@@ -59,6 +59,10 @@ The file downloader accepts only HTTPS URLs returned by scoped Xledger records, 
 
 Limits are explicit: 30 MiB per original file, 100 PDF pages and a processing-time budget per read. Over-limit or unreadable pages cause review/failure, not complete coverage. PDF/EHF support does not prove that Xledger exposes a particular original EHF or that a demo file exists: a live demo attachment link returned HTTP 404 during validation. File access must be checked with the actual token/environment.
 
+## Sales-settlement originals (1.7.0)
+
+Original daily-report PDFs can be read from exact posted sales/cash vouchers, including supported paginated header attachments. Results include page/line payment evidence, document hashes and explicit read/OCR coverage. Customer cash totals remain unverified until the actual report layout and payment definitions are checked; repeated cash-balance postings are not customer receipts. See [sales-settlement documents](docs/sales-settlement-documents.md) for scope and production acceptance checks.
+
 ## Tools
 
 | Tool | Description |
@@ -69,6 +73,9 @@ Limits are explicit: 30 MiB per original file, 100 PDF pages and a processing-ti
 | `get_invoice_line_records` | One page of raw, schema-checked electronic/vendor invoice details or sales invoice basis; defaults to one record |
 | `get_invoice_documents` | Exact invoice's original files, including the transaction-header attachment |
 | `read_invoice_document` | Original PDF/EHF, all supported page text, reconciled lines and per-document read status |
+| `get_sales_settlement_capabilities` | Schema discovery for original daily-report/settlement files; does not establish record permissions |
+| `get_sales_settlement_documents` | Exact posted sales/cash candidate's primary original and supported paginated attachments |
+| `read_sales_settlement_document` | Original daily-report PDF text, page/line payment evidence and explicit OCR/coverage states; no inferred cash total |
 | `start_invoice_scan` | Background enumeration and reading of every supplier invoice in a period |
 | `get_invoice_scan` | Complete coverage progress and a paged status ledger for every selected invoice |
 | `resume_invoice_scan` | Continue checkpointed work and retry missing/failed documents |

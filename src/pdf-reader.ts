@@ -104,7 +104,13 @@ export function readPdfTable(pages: PdfPage[], currency: string): { lines: Invoi
   return { lines, warnings, lineNetTotal };
 }
 
-export async function readPdf(bytes: Buffer, expectedCurrency?: string): Promise<ParsedInvoice> {
+export interface PdfExtraction {
+  pages: PdfPage[]; pageCount: number; pagesRead: number; text: string;
+  textComplete: boolean; ocrUsed: boolean; warnings: string[];
+}
+
+/** Shared local extraction, without assuming that the PDF is an invoice. */
+export async function extractPdf(bytes: Buffer): Promise<PdfExtraction> {
   const deadline = Date.now() + 90_000;
   if (!bytes.subarray(0, 1024).includes(Buffer.from("%PDF-"))) throw new Error("Invalid PDF signature");
   const directory = await mkdtemp(join(tmpdir(), "xledger-invoice-"));
@@ -149,25 +155,34 @@ export async function readPdf(bytes: Buffer, expectedCurrency?: string): Promise
     }
     let text = pages.map(p => `[Page ${p.number}${p.ocr ? "; OCR" : ""}]\n${pageRows(p).map(r => r.map(w => w.text).join(" ")).join("\n")}`).join("\n\n");
     if (text.length > MAX_TEXT) { text = text.slice(0, MAX_TEXT); warnings.push("Extracted text exceeds the output limit; document is incomplete"); }
-    const seenCurrencies = [...new Set(text.match(/\b(?:NOK|EUR|USD|SEK|DKK|GBP)\b/g) ?? [])];
-    const currency = seenCurrencies.length === 1 ? seenCurrencies[0] : null;
-    if (expectedCurrency && currency !== expectedCurrency) warnings.push("PDF currency is missing, ambiguous, or differs from the Xledger invoice");
-    const table = currency ? readPdfTable(pages, currency) : { lines: [], warnings: ["No verified document currency"], lineNetTotal: null };
-    warnings.push(...table.warnings);
     if (pageCount > MAX_PAGES) warnings.push(`PDF has ${pageCount} pages; only ${MAX_PAGES} were read`);
     if (pages.length !== Math.min(pageCount, MAX_PAGES)) warnings.push("PDF page extraction is incomplete");
-    const invoiceNumber = text.match(/(?:faktura(?:nummer|nr\.?|\s*nr\.?)|invoice\s*(?:number|no\.?|#))\s*[:#]?\s*([\w/-]+)/i)?.[1] ?? null;
-    const creditNote = pages.some(p => pageRows(p).some(row => /^(kreditnota|credit\s*note)(?:\s+(?:nr|no)\.?\s*:?\s*[\w/-]+)?$/i.test(row.map(w => w.text).join(" ").trim())));
-    const rawDate = text.match(/(?:fakturadato|invoice\s*date)\s*:?\s*(\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4})/i)?.[1];
-    const invoiceDate = rawDate?.includes(".") ? rawDate.split(".").reverse().join("-") : rawDate ?? null;
-    if (!invoiceNumber || !invoiceDate) warnings.push("PDF invoice number/date could not be established");
-    return { format: "pdf", invoiceNumber, invoiceDate, seller: null, sellerId: null, buyerId: null, currency, creditNote,
-      lines: table.lines, text, pages: pageCount, pagesRead: pages.filter(p => p.words.length > 0).length,
-      status: warnings.length || !table.lines.length ? "needs_review" : "read", warnings, lineNetTotal: table.lineNetTotal };
+    const pagesRead = pages.filter(p => p.words.some(w => w.text.trim())).length;
+    return { pages, pageCount, pagesRead, text, ocrUsed: pages.some(p => p.ocr), warnings,
+      textComplete: pages.length === pageCount && pagesRead === pageCount && !warnings.some(w => /incomplete|not read|limit reached/.test(w)) };
   } catch (error) {
     // Child-process errors include paths/stderr. Return a bounded generic error;
     // never echo command input or invoice content into platform logs.
     if (error instanceof Error && error.message.startsWith("Invalid PDF")) throw error;
     throw new Error("PDF could not be read (encrypted, malformed, missing local PDF utilities, or processing timeout)");
   } finally { await rm(directory, { recursive: true, force: true }); }
+}
+
+export async function readPdf(bytes: Buffer, expectedCurrency?: string): Promise<ParsedInvoice> {
+  const extracted = await extractPdf(bytes);
+  const { pages, pageCount, pagesRead, text } = extracted;
+  const warnings = [...extracted.warnings];
+  const seenCurrencies = [...new Set(text.match(/\b(?:NOK|EUR|USD|SEK|DKK|GBP)\b/g) ?? [])];
+  const currency = seenCurrencies.length === 1 ? seenCurrencies[0] : null;
+  if (expectedCurrency && currency !== expectedCurrency) warnings.push("PDF currency is missing, ambiguous, or differs from the Xledger invoice");
+  const table = currency ? readPdfTable(pages, currency) : { lines: [], warnings: ["No verified document currency"], lineNetTotal: null };
+  warnings.push(...table.warnings);
+  const invoiceNumber = text.match(/(?:faktura(?:nummer|nr\.?|\s*nr\.?)|invoice\s*(?:number|no\.?|#))\s*[:#]?\s*([\w/-]+)/i)?.[1] ?? null;
+  const creditNote = pages.some(p => pageRows(p).some(row => /^(kreditnota|credit\s*note)(?:\s+(?:nr|no)\.?\s*:?\s*[\w/-]+)?$/i.test(row.map(w => w.text).join(" ").trim())));
+  const rawDate = text.match(/(?:fakturadato|invoice\s*date)\s*:?\s*(\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4})/i)?.[1];
+  const invoiceDate = rawDate?.includes(".") ? rawDate.split(".").reverse().join("-") : rawDate ?? null;
+  if (!invoiceNumber || !invoiceDate) warnings.push("PDF invoice number/date could not be established");
+  return { format: "pdf", invoiceNumber, invoiceDate, seller: null, sellerId: null, buyerId: null, currency, creditNote,
+    lines: table.lines, text, pages: pageCount, pagesRead,
+    status: warnings.length || !table.lines.length ? "needs_review" : "read", warnings, lineNetTotal: table.lineNetTotal };
 }
