@@ -1,6 +1,7 @@
 /** Read-only OnlinePOS adapter. Credentials stay in the server environment. */
 import type { CompanyId } from "./companies.js";
 import { validateDate } from "./validation.js";
+import { analyseOnlinePosCash } from "./onlinepos-cash.js";
 
 const BASE_URL = "https://api.onlinepos.dk/api";
 const MAX_BYTES = 2 * 1024 * 1024;
@@ -136,7 +137,8 @@ export class OnlinePosRegistry {
       fail("Unsupported OnlinePOS read path", "READ_ONLY");
     const url = `${this.config().baseUrl}${path}${query ? `?${query}` : ""}`;
     try {
-      const response = await this.fetcher(url, { method, redirect: "error", signal: AbortSignal.timeout(12_000),
+      // Live revenue reads can exceed 12 seconds even for short windows. Keep a finite budget inside one MCP call.
+      const response = await this.fetcher(url, { method, redirect: "error", signal: AbortSignal.timeout(25_000),
         headers: { token: c.token, firmaid: String(c.firmaid), Accept: "application/json" } });
       if (!response.ok) {
         await response.body?.cancel();
@@ -240,5 +242,18 @@ export class OnlinePosRegistry {
     }
     return { ...this.output(items, company, window, data, options.first ?? 100, options.offset ?? 0, "/end_of_day_journal"),
       providerLocalWindow: { time_from: params.get("time_from"), time_to: params.get("time_to"), timeZone: "Europe/Oslo" } };
+  }
+  async cashAnalysis(company: CompanyId, options: { from: string; to: string }) {
+    const window = onlinePosWindow(options.from, options.to);
+    if (window.toUnix - window.fromUnix > 12 * 3600)
+      fail("Cash analysis accepts at most 12 elapsed hours per read; use smaller closing-time windows and retain journal identities", "INVALID_RANGE");
+    this.credential(company);
+    await this.verify(company);
+    // Independent retrievals share the same immutable selected-company credential. A failed source fails the analysis.
+    const [revenue, journals] = await Promise.all([
+      this.revenue(company, { ...options, first: 200, offset: 0 }),
+      this.journals(company, { ...options, first: 200, offset: 0 }),
+    ]);
+    return { ...analyseOnlinePosCash(revenue, journals), restaurantId: this.credential(company).restaurantId };
   }
 }

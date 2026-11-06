@@ -188,3 +188,23 @@ describe("financial number and date precision", () => {
     await expect(registry.revenue(K, range)).rejects.toThrow(); expect(fetcher).not.toHaveBeenCalled();
   });
 });
+
+describe("cash-analysis source retrieval", () => {
+  const shortRange = { from: "2026-10-01T18:00:00+02:00", to: "2026-10-01T23:00:00+02:00" };
+  it("refuses long analysis windows before provider traffic", async () => {
+    const { registry, fetcher } = backend();
+    await expect(registry.cashAnalysis(K, posRange)).rejects.toMatchObject({ code: "INVALID_RANGE" });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  it("makes no provider request while disabled or for an unconfigured company", async () => {
+    const { registry, fetcher } = backend({ env: { ONLINEPOS_ENABLED: "false" } });
+    await expect(registry.cashAnalysis(K, shortRange)).rejects.toMatchObject({ code: "DISABLED" });
+    expect(fetcher).not.toHaveBeenCalled();
+    const other = backend(); await expect(other.registry.cashAnalysis("kraftgutta", shortRange)).rejects.toMatchObject({ code: "NOT_CONFIGURED" });
+    expect(other.fetcher).not.toHaveBeenCalled();
+  });
+  it("fails the analysis when an upstream read fails rather than returning a partial success or zero", async () => {
+    const { registry } = backend({ status: 503 });
+    await expect(registry.cashAnalysis(K, shortRange)).rejects.toMatchObject({ code: "HTTP_503" });
+  });
+});

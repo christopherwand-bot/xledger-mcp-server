@@ -1,4 +1,4 @@
-# OnlinePOS read adapter (1.8.0)
+# OnlinePOS read adapter (1.9.0)
 
 OnlinePOS is an additional read source on the existing MCP endpoint. Xledger remains the booked accounting source. The first version exposes source revenue/payment observations and end-of-day journal lines; it does not certify a customer cash total before actual field definitions and report coverage have been validated.
 
@@ -46,4 +46,17 @@ Automated checks cover the user's array shape, multi-company isolation, disabled
 
 After deployment, load real credentials in the existing array format, explicitly enable the adapter, refresh the MCP tool catalogue and probe each selected location. Read a small known interval, inspect actual `btypes` and original journal definitions, then reconcile two known POS reports including refunds/change/tips/float before implementing automatic cash totals. A token accepted for one venue/endpoint does not establish access to the other venue/endpoint. Do not replace or regenerate keys based only on an untested assumption about their group scope.
 
-Primary API reference: [OnlinePOS External API v2](https://speca.io/SimonOnlinePOS/external-api-v2?key=41502b8375f30e56b210877ef797b7e4), linked from [OnlinePOS Norway](https://www.onlinepos.no/kontakt/salg). The published location inventory, revenue journal fields/48-hour limit and end-of-day retrieval contract were checked on 2026-11-06. Actual responses remain a live acceptance dependency.
+Primary API reference: [OnlinePOS External API v2](https://speca.io/SimonOnlinePOS/external-api-v2?key=41502b8375f30e56b210877ef797b7e4), linked from [OnlinePOS Norway](https://www.onlinepos.no/kontakt/salg). The published location inventory, revenue journal fields/48-hour limit and end-of-day retrieval contract were checked on 2026-11-06. The 1.8.0 adapter was subsequently verified against both configured restaurants: location inventory, revenue journals and original end-of-day lines were readable. Cash-field semantics, independent full-period report inventory and currency remain separate acceptance dependencies.
+
+
+## Cash analysis
+
+`get_onlinepos_cash_analysis` fetches both financial endpoints with the same immutable selected-company credentials. It accepts explicit-offset closing-time windows of at most 12 elapsed hours; shorter windows help with provider response times. The full journals selected by closing time can include sales outside that window. This is not a calendar-period scan or a background job.
+
+The tool matches Firma-ID, register, journal number and unambiguous closing timestamps. It reports the original `btypes.Kontant` value, opening/closing cash counts on 190x, the change between comparable counts, tips, outlays, other cash-account movements and till differences separately. Observations retain source journal identities and line indexes. Exact decimal arithmetic checks the entire journal's debit/credit balance. A balanced journal or equal count movement is evidence for review, not proof of gross customer cash receipts. Outlays are observations whose payment instrument has not been independently established.
+
+`reportedCashFieldSubtotal` sums only explicitly observed, supported `btypes.Kontant` values. Positive and negative subtotals are source observations; they are not automatically gross receipts and refunds. A missing/unsupported field, absent journal, empty response, failed source or duplicate identity never becomes zero. An explicit zero field remains distinguishable from absence. All fields remain in unverified source units because these endpoints do not report currency. `customerCashPayments` and `verifiedPeriodCashTotal` stay null and `paymentAmountVerified` stays false.
+
+`responseComplete` describes retrieval/output coverage only. The 200-row output bound on each reader, unsupported upstream pagination, unmatched journals, timestamp differences, boundary records, unbalanced journals and cash-count discrepancies remain explicit. Independent report-inventory completeness is always unverified. Before combining calls, deduplicate by Firma-ID/register/journal number and establish report/business-date coverage. A source subtotal is never presented as a verified monthly cash total.
+
+The exact supported count labels are `Startoptælling` and `Slutoptælling` on a 190x account. Other labels/movements stay unclassified rather than silently being mapped to customer payments. The public provider reference describes `btypes` as an object without sufficient definitions for refunds, change, cash tips or float; a live positive cash field alone does not settle those questions.

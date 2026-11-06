@@ -141,7 +141,7 @@ describe("explicit company routing through the actual MCP protocol", () => {
   it("reports all company identities when connection info has no selected company", async () => {
     const { call } = await connect(fixture().registry);
     const result = await call("get_connection_info");
-    expect(result.data).toMatchObject({ version: "1.8.0", companySelectionRequired: true, currentEntities: [] });
+    expect(result.data).toMatchObject({ version: "1.9.0", companySelectionRequired: true, currentEntities: [] });
     expect(result.data.companies[1]).toMatchObject({ id: "kraft_pizzeria", status: "verified", ownerDbId: 8 });
   });
   it("probes company-specific read access without returning amounts or invoices", async () => {
