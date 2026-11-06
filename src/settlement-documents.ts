@@ -142,7 +142,7 @@ export async function getSalesSettlementDocuments(run: GqlRunner, options: Settl
       for (const edge of c.edges || []) {
         const n = edge?.node;
         if (!n || !id64(n.dbId) || a.ownerField && n.ownerDbId !== owner ||
-          a.headerIdField && n[a.headerIdField] !== options.headerDbId) throw new Error("Settlement attachment identity/owner/header mismatch");
+          a.headerIdField && String(n[a.headerIdField]) !== String(options.headerDbId)) throw new Error("Settlement attachment identity/owner/header mismatch");
         if (attachmentIds.has(String(n.dbId))) throw new Error("Repeated settlement attachment across pages");
         attachmentIds.add(String(n.dbId));
         if (a.direct) addFile(n, "transactions.header.attachments");

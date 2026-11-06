@@ -65,6 +65,12 @@ describe("original sales-settlement documents", () => {
     const c = connection("attachments", [{ dbId: 1, ownerDbId: 7, headerDbId: 90, file: null }], true, "").attachments;
     expect((await getSalesSettlementDocuments(settlementBackend({ attachmentPages: [c] }).run, settlementRequest)).enumerationComplete).toBe(false);
   });
+  it("preserves exact header linkage when a schema uses string IDs", async () => {
+    const c = connection("attachments", [{ dbId: 1, ownerDbId: 7, headerDbId: "90", file: null }]).attachments;
+    const { run, types } = settlementBackend({ attachmentPages: [c] });
+    types.JournalAttachment.fields.find((f: any) => f.name === "headerDbId").type.name = "Int64String";
+    expect((await getSalesSettlementDocuments(run, settlementRequest)).enumerationComplete).toBe(true);
+  });
   it.each([
     { dbId: 1, ownerDbId: 8, headerDbId: 90, file: null },
     { dbId: 1, ownerDbId: 7, headerDbId: 91, file: null },
