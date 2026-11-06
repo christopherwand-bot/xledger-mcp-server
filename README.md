@@ -119,6 +119,40 @@ npm run build
 
 ### Environment variables
 
+Version 1.6.0 supports explicit company selection on the existing MCP endpoint.
+Keep `XLEDGER_GRAPHQL_TOKEN` for Kraftgutta AS and add a separate read-only token
+for each additional company:
+
+| Company ID | Expected company name | Token variable |
+|---|---|---|
+| `kraftgutta` | Kraftgutta AS | `XLEDGER_GRAPHQL_TOKEN` |
+| `kraft_pizzeria` | Kraft Pizzeria AS | `XLEDGER_GRAPHQL_TOKEN_KRAFT_PIZZERIA` |
+| `kraft_pizzeria_honefoss` | Kraft Pizzeria Hønefoss AS | `XLEDGER_GRAPHQL_TOKEN_KRAFT_PIZZERIA_HONEFOSS` |
+| `kraft_pizzeria_kongsberg` | Kraft Pizzeria Kongsberg AS | `XLEDGER_GRAPHQL_TOKEN_KRAFT_PIZZERIA_KONGSBERG` |
+| `speti` | Speti AS | `XLEDGER_GRAPHQL_TOKEN_SPETI` |
+
+Use `list_companies` to see configured IDs. With more than one configured token,
+every business tool requires `company` (for example `"company": "kraft_pizzeria"`).
+An omitted or unconfigured company fails before accounting is read. A single
+configured company retains the previous default behavior. `get_connection_info`
+without a company verifies all configured identities and returns their status;
+with a company it returns that company's connection details.
+Set `checkReadAccess: true` on this diagnostic tool to probe one scoped balance
+and AP record per selected company without returning financial values. Empty
+sources are labelled `accepted_without_rows`; they do not prove zero balances.
+
+Each token's CURRENT entity name is checked before financial access. Owned source
+rows are checked against its verified entity ID, results identify the selected
+company, and embedded original-file URIs include the company ID. Background scans
+use immutable company-specific clients; checkpoint access remains separated by
+API origin and verified entity ID. A mismatched token fails closed. This verifies
+the selected identity, not every permission granted to the token by Xledger.
+
+The existing OAuth subject allowlist applies to all configured companies. Company
+selection is data routing within that authorized audience, not a new per-user
+access grant. Personnel tools remain disabled by default. After deploying the
+expanded tool schemas, reload the existing plugin's MCP tools in ChatGPT.
+
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `XLEDGER_GRAPHQL_TOKEN` | Yes | — | Your Xledger API token |

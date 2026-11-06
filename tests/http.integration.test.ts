@@ -7,12 +7,13 @@ const children: ChildProcess[] = [];
 let api: Server;
 let url: string;
 let oauthUrl: string;
+let multiUrl: string;
 const secret = "dummy-http-regression-secret";
 const headers = { Authorization: `Bearer ${secret}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" };
 
 async function start(extra: Record<string, string> = {}) {
   const env = { ...process.env };
-  for (const name of Object.keys(env)) if (name.startsWith("OAUTH_")) delete env[name];
+  for (const name of Object.keys(env)) if (name.startsWith("OAUTH_") || name.startsWith("XLEDGER_GRAPHQL_TOKEN_")) delete env[name];
   const address = api.address() as { port: number };
   const child = spawn(process.execPath, ["dist/index.js"], {
     env: { ...env, MCP_TRANSPORT: "http", PORT: "0", MCP_AUTH_TOKEN: secret, XLEDGER_GRAPHQL_TOKEN: "dummy-xledger-secret", XLEDGER_API_URL: `http://127.0.0.1:${address.port}/graphql`, XLEDGER_ENABLE_PERSONNEL_TOOLS: "", MCP_ALLOW_LEGACY_BEARER: "", ...extra },
@@ -33,8 +34,8 @@ async function start(extra: Record<string, string> = {}) {
   });
 }
 
-async function rpc(body: unknown, session?: string) {
-  const response = await fetch(url + "/mcp", { method: "POST", headers: { ...headers, ...(session ? { "Mcp-Session-Id": session } : {}) }, body: JSON.stringify(body) });
+async function rpc(body: unknown, session?: string, target = url) {
+  const response = await fetch(target + "/mcp", { method: "POST", headers: { ...headers, ...(session ? { "Mcp-Session-Id": session } : {}) }, body: JSON.stringify(body) });
   const text = await response.text();
   const data = text.startsWith("event:") ? JSON.parse(text.split("\n").find(line => line.startsWith("data:"))!.slice(5)) : text ? JSON.parse(text) : null;
   return { response, data };
@@ -45,11 +46,13 @@ beforeAll(async () => {
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(Buffer.from(chunk));
     const query = JSON.parse(Buffer.concat(chunks).toString()).query as string;
+    const restaurant = req.headers.authorization === "token dummy-restaurant-secret";
+    const owner = restaurant ? 8 : 7;
     const rows = [{ dbId: 1, invoiceNumber: "TEST-1", invoiceRemaining: "-100" }, { dbId: 2, invoiceNumber: "TEST-2", invoiceRemaining: "25" }]
-      .map(row => ({ ...row, ownerDbId: 7, transactionHeaderDbId: 70, transactionHeader: { dbId: 70, ownerDbId: 7 } }));
+      .map(row => ({ ...row, ownerDbId: owner, transactionHeaderDbId: 70, transactionHeader: { dbId: 70, ownerDbId: owner } }));
     const nodes = query.includes("invoiceRemaining_lt") ? rows : rows.filter(row => Number(row.invoiceRemaining) > 0);
     res.writeHead(200, { "Content-Type": "application/json" });
-    const data = query.includes("entities(") ? { entities: { edges: [{ node: { dbId: 7 } }] } }
+    const data = query.includes("entities(") ? { entities: { edges: [{ node: { dbId: owner, description: restaurant ? "Kraft Pizzeria AS" : "Kraftgutta As" } }] } }
       : { apTransactions: { pageInfo: { hasNextPage: false }, edges: nodes.map(node => ({ cursor: String(node.dbId), node })) } };
     res.end(JSON.stringify({ data }));
   });
@@ -57,6 +60,7 @@ beforeAll(async () => {
   await once(api, "listening");
   url = await start();
   oauthUrl = await start({ OAUTH_ISSUER: "https://auth.example.test/", OAUTH_RESOURCE: "https://mcp.example.test", OAUTH_ALLOWED_SUBJECTS: "auth0|test-pilot" });
+  multiUrl = await start({ XLEDGER_GRAPHQL_TOKEN_KRAFT_PIZZERIA: "dummy-restaurant-secret" });
 });
 
 afterAll(async () => {
@@ -65,10 +69,23 @@ afterAll(async () => {
 });
 
 describe("real HTTP transport with isolated dummy credentials", () => {
+  it("routes an explicitly selected company through its own upstream API token", async () => {
+    const init = await rpc({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "multi-http-test", version: "1" } } }, undefined, multiUrl);
+    const session = init.response.headers.get("mcp-session-id")!;
+    await rpc({ jsonrpc: "2.0", method: "notifications/initialized" }, session, multiUrl);
+    const result = await rpc({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "get_ap_transactions", arguments: { company: "kraft_pizzeria", first: 10 } } }, session, multiUrl);
+    expect(result.data.result.isError).not.toBe(true);
+    const data = JSON.parse(result.data.result.content[0].text);
+    expect(data).toMatchObject({ company: { id: "kraft_pizzeria", ownerDbId: 8 }, ownerDbId: 8 });
+    expect(data.items.every((row: any) => row.ownerDbId === 8)).toBe(true);
+    const omitted = await rpc({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "get_ap_transactions", arguments: { first: 10 } } }, session, multiUrl);
+    expect(omitted.data.result.isError).toBe(true);
+    expect(omitted.data.result.content[0].text).toContain("Select company explicitly");
+  });
   it("reports the deployed code version without exposing credentials", async () => {
     const response = await fetch(url + "/health");
     const data = await response.json();
-    expect(data).toMatchObject({ status: "ok", version: "1.5.1" });
+    expect(data).toMatchObject({ status: "ok", version: "1.6.0" });
     expect(JSON.stringify(data)).not.toContain(secret);
   });
 
